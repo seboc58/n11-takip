@@ -19,8 +19,8 @@ fiyat_hafizasi = {}
 
 def telegram_mesaj_gonder(mesaj):
     try:
-        api_url = f"https://api.telegram.org/bot{8848387261:AAHbWKc2-CLx2jXDBY91fAcOio3CTiWtTkw}/sendMessage"
-        requests.post(api_url, data={"chat_id": 485785856, "text": mesaj, "parse_mode": "HTML"})
+        api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(api_url, data={"chat_id": CHAT_ID, "text": mesaj, "parse_mode": "HTML"})
     except Exception as e:
         print(f"Telegram hatasi: {e}")
 
