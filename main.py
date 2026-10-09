@@ -6,8 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 
 # Telegram Bilgileri
-TELEGRAM_TOKEN = "8848387261:AAHbWKc2-CLx2jXDBY91fAcOio3CTiWtTkw
-"
+TELEGRAM_TOKEN = "8848387261:AAHbWKc2-CLx2jXDBY91fAcOio3CTiWtTkw"
 CHAT_ID = "485785856"
 
 URL = "https://www.n11.com/magaza/teknosa"
