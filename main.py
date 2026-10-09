@@ -8,8 +8,8 @@ from bs4 import BeautifulSoup
 # ==========================================
 # AYARLAR (Kendi Bilgilerinizi Girin)
 # ==========================================
-TELEGRAM_TOKEN = "8848387261:AAGC0TrxlcfG74J0WVjONk4bcZI-5txya8Q"
-CHAT_ID = "485785856"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 
 # Takip edilecek mağazalar (İstediğiniz kadar ekleyebilirsiniz)
 MAGAZALAR = {
