@@ -5,32 +5,61 @@ import time
 import requests
 from bs4 import BeautifulSoup
 
-# Telegram Bilgileri
+# ==========================================
+# AYARLAR (Kendi Bilgilerinizi Girin)
+# ==========================================
 TELEGRAM_TOKEN = "8848387261:AAHbWKc2-CLx2jXDBY91fAcOio3CTiWtTkw"
 CHAT_ID = "485785856"
 
-# 🎯 Takip Etmek İstediğiniz Mağazaların Listesi
+# Takip edilecek mağazalar (İstediğiniz kadar ekleyebilirsiniz)
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/magaza/teknosa",
     "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
     "N11": "https://www.n11.com/magaza/n11",
+    "Braunshop": "https://www.n11.com/magaza/braunshop",
     "Karaca": "https://www.n11.com/magaza/karaca",
-    "Skechers": "https://www.n11.com/magaza/skerchers"
+    "Skechers": "https://www.n11.com/magaza/skechers"
 }
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-# Her mağaza için ayrı fiyat hafızası tutulur
+# Hafıza sözlükleri
 fiyat_hafizasi = {}
+kupon_hafizasi = {}
 
 def telegram_mesaj_gonder(mesaj):
     try:
         api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(api_url, data={"chat_id": CHAT_ID, "text": mesaj, "parse_mode": "HTML"})
+        requests.post(api_url, data={"chat_id": CHAT_ID, "text": mesaj, "parse_mode": "HTML"}, timeout=10)
     except Exception as e:
-        print(f"Telegram hatasi: {e}")
+        print(f"Telegram gönderme hatasi: {e}")
+
+def kuponlari_tara(soup, magaza_adi, magaza_url):
+    global kupon_hafizasi
+    try:
+        # n11 mağaza sayfalarındaki olası kupon sınıfları
+        kupon_elementleri = soup.find_all(class_=["coupon-item", "seller-coupon", "voucher-item", "coupon"])
+        
+        for elem in kupon_elementleri:
+            kupon_metni = elem.text.strip().replace("\n", " ")
+            # Çok kısa veya anlamsız metinleri ele
+            if len(kupon_metni) > 5:
+                hafiza_anahtari = f"{magaza_adi}_{kupon_metni}"
+                
+                if hafiza_anahtari not in kupon_hafizasi:
+                    kupon_hafizasi[hafiza_anahtari] = True
+                    
+                    mesaj = (
+                        f"🎟️ <b>YENİ MAĞAZA KUPONU BULUNDU!</b>\n\n"
+                        f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
+                        f"🏷️ <b>Kupon Detayı:</b> {kupon_metni}\n\n"
+                        f"🔗 <a href='{magaza_url}'>Kuponu Almak İçin Mağazaya Git</a>"
+                    )
+                    telegram_mesaj_gonder(mesaj)
+    except Exception as e:
+        print(f"{magaza_adi} kupon tarama hatasi: {e}")
 
 def magazalari_tara():
     global fiyat_hafizasi
@@ -40,6 +69,11 @@ def magazalari_tara():
                 response = requests.get(url, headers=HEADERS, timeout=15)
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.text, "html.parser")
+
+                    # 1. KUPON TARAMASI
+                    kuponlari_tara(soup, magaza_adi, url)
+
+                    # 2. ÜRÜN FİYAT TARAMASI
                     urunler = soup.find_all("li", class_="column")
 
                     for urun in urunler:
@@ -57,7 +91,6 @@ def magazalari_tara():
                             except ValueError:
                                 continue
 
-                            # Mağaza bazlı anahtar (Örn: "Teknosa - iPhone 13")
                             hafiza_anahtari = f"{magaza_adi} - {urun_adi}"
 
                             if hafiza_anahtari not in fiyat_hafizasi:
@@ -78,20 +111,20 @@ def magazalari_tara():
             except Exception as e:
                 print(f"{magaza_adi} tarama hatasi: {e}")
             
-            # Mağazalar arasında 3 saniye bekle (n11 engeline takılmamak için)
+            # Mağazalar arası 3 saniye bekle
             time.sleep(3)
         
-        # Tüm mağazalar tarandıktan sonra 5 dakika bekle
+        # Tüm mağazalar tarandıktan sonra 5 dakika (300 saniye) bekle
         time.sleep(300)
 
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Coklu Magaza Takip Botu Aktif!")
+        self.wfile.write(b"Fiyat ve Kupon Takip Botu Aktif!")
 
 if __name__ == "__main__":
-    telegram_mesaj_gonder("🚀 Çoklu Mağaza Takip Botu Güncellendi ve Başlatıldı!")
+    telegram_mesaj_gonder("🚀 Fiyat ve Kupon Takip Botu Güncellendi ve Başlatıldı!")
     
     threading.Thread(target=magazalari_tara, daemon=True).start()
     
