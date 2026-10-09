@@ -81,8 +81,8 @@ def magazalari_tara():
             # Mağazalar arasında 3 saniye bekle (n11 engeline takılmamak için)
             time.sleep(3)
         
-        # Tüm mağazalar tarandıktan sonra 10 dakika bekle
-        time.sleep(600)
+        # Tüm mağazalar tarandıktan sonra 5 dakika bekle
+        time.sleep(300)
 
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
