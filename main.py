@@ -44,7 +44,6 @@ def telegram_mesaj_gonder(mesaj):
 def kuponlari_tara(soup, magaza_adi, magaza_url):
     global kupon_hafizasi
     try:
-        # n11 kupon alanları için genişletilmiş arama
         kupon_elementleri = soup.find_all(class_=lambda x: x and any(c in x.lower() for c in ["coupon", "voucher", "indirim", "kampanya"]))
         
         for elem in kupon_elementleri:
@@ -67,8 +66,11 @@ def kuponlari_tara(soup, magaza_adi, magaza_url):
 
 def magazalari_tara():
     global fiyat_hafizasi
+    
+    # TEST İÇİN: İlk açılışta sahte bir ürün ve yüksek fiyat ekleyelim ki ilk taramada düşüş algılayıp mesaj atsın
+    fiyat_hafizasi["Teknosa - Test Dyson Süpürge"] = 999999
+
     while True:
-        fiyat_hafizasi["https://www.n11.com/urun/dyson-cyclone-v10-submarine-dikey-sarjli-supurge-117208929?magaza=teknosa"] = 999999
         for magaza_adi, url in MAGAZALAR.items():
             try:
                 response = requests.get(url, headers=HEADERS, timeout=15)
@@ -78,24 +80,18 @@ def magazalari_tara():
                     # 1. KUPON TARAMASI
                     kuponlari_tara(soup, magaza_adi, url)
 
-                    # 2. ÜRÜN FİYAT TARAMASI (Daha esnek yapı: hem li hem div kartları)
+                    # 2. ÜRÜN FİYAT TARAMASI
                     urunler = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
 
                     for urun in urunler:
-                        # Başlık etiketini farklı olası class'lara göre ara
                         baslik_etiketi = urun.find(["h3", "h4", "a"], class_=lambda x: x and any(c in x.lower() for c in ["name", "title"]))
-                        
-                        # Fiyat etiketini ara (ins, span, div içindeki fiyat alanları)
                         fiyat_etiketi = urun.find("ins") or urun.find(class_=lambda x: x and any(c in x.lower() for c in ["price", "newprice", "fiyat"]))
-                        
-                        # Ürün linkini bul
                         link_etiketi = urun.find("a")
 
                         if baslik_etiketi and fiyat_etiketi and link_etiketi:
                             urun_adi = baslik_etiketi.text.strip()
                             fiyat_text = fiyat_etiketi.text.strip().replace("TL", "").replace("₺", "").replace(".", "").replace(",", ".").strip()
                             
-                            # Fiyat metninden sadece sayısal karakterleri ve noktayı ayıkla
                             temiz_fiyat = "".join([c for c in fiyat_text if c.isdigit() or c == '.'])
 
                             try:
@@ -103,7 +99,6 @@ def magazalari_tara():
                             except ValueError:
                                 continue
 
-                            # Çok kısa başlıkları veya alakasız elementleri ele
                             if len(urun_adi) < 3 or guncel_fiyat <= 0:
                                 continue
 
