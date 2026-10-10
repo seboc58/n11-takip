@@ -96,9 +96,15 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Fiyat Botu Aktif!")
 
 if __name__ == "__main__":
+    print("Bot başlatılıyor...", flush=True)
     telegram_mesaj_gonder("🚀 Bot Başlatıldı ve Test Modunda!")
-    threading.Thread(target=magazalari_tara, daemon=True).start()
+    
+    # Arka plan iş parçacığını başlat
+    t = threading.Thread(target=magazalari_tara, daemon=True)
+    t.start()
+    print("Tarama thread'i baslatildi!", flush=True)
     
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
+    print(f"HTTP Sunucu {port} portunda baslatiliyor...", flush=True)
     server.serve_forever()
