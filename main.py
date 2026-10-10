@@ -11,18 +11,18 @@ from bs4 import BeautifulSoup
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
-# Mobil n11 linkleri (Engel takılma ihtimali çok düşüktür)
+# Mağaza sayfaları yerine koruması daha esnek olan n11 arama / kategori sayfaları
 MAGAZALAR = {
-    "Teknosa": "https://m.n11.com/magaza/teknosa",
-    "Mediamarkt": "https://m.n11.com/magaza/mediamarkt",
-    "Braunshop": "https://m.n11.com/magaza/braunshop"
+    "Teknosa Ürünleri": "https://www.n11.com/arama?q=teknosa",
+    "MediaMartk Ürünleri": "https://www.n11.com/arama?q=mediamarkt",
+    "Braun Ürünleri": "https://www.n11.com/arama?q=braun"
 }
 
-# Mobil tarayıcı (iPhone Safari) kimliği - n11 bunu engellemez
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": "https://www.n11.com/"
 }
 
 fiyat_hafizasi = {}
@@ -38,13 +38,13 @@ def telegram_mesaj_gonder(mesaj):
 def magazalari_tara():
     global fiyat_hafizasi
     
-    # Test için hafızaya sahte ürün atıyoruz
+    # Test için sahte ürün
     fiyat_hafizasi["Test Ürünü - Kontrol"] = 999999
 
     while True:
         for magaza_adi, url in MAGAZALAR.items():
             try:
-                print(f"{magaza_adi} mobil adresten taranıyor...", flush=True)
+                print(f"{magaza_adi} arama sayfasından taranıyor...", flush=True)
                 response = requests.get(url, headers=HEADERS, timeout=20)
                 
                 print(f"HTTP Durum Kodu: {response.status_code}", flush=True)
@@ -52,13 +52,13 @@ def magazalari_tara():
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.text, "html.parser")
                     
-                    # Mobil sayfadaki ürün kutuları ve etiketleri
-                    urunler = soup.find_all(["div", "li"], class_=lambda x: x and any(c in x.lower() for c in ["product", "item", "cell"]))
+                    # n11 arama sonuçlarındaki ürün kartları (genellikle li veya div elementleri)
+                    urunler = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
                     print(f"Bulunan ürün kutusu sayısı: {len(urunler)}", flush=True)
 
                     for urun in urunler:
-                        baslik_etiketi = urun.find(["h3", "h4", "span", "a"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name", "content"]))
-                        fiyat_etiketi = urun.find(class_=lambda x: x and any(c in x.lower() for c in ["price", "newprice", "fiyat", "amount"]))
+                        baslik_etiketi = urun.find(["h3", "h4", "a"], class_=lambda x: x and any(c in x.lower() for c in ["name", "title"]))
+                        fiyat_etiketi = urun.find("ins") or urun.find(class_=lambda x: x and any(c in x.lower() for c in ["price", "newprice", "fiyat"]))
                         link_etiketi = urun.find("a")
 
                         if baslik_etiketi and fiyat_etiketi and link_etiketi:
@@ -84,7 +84,7 @@ def magazalari_tara():
                                 if guncel_fiyat != eski_fiyat:
                                     mesaj = (
                                         f"🔔 <b>FİYAT DEĞİŞTİ!</b>\n\n"
-                                        f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
+                                        f"🏪 <b>Kategori:</b> {magaza_adi}\n"
                                         f"📦 <b>Ürün:</b> {urun_adi}\n"
                                         f"💵 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
                                         f"🏷️ <b>Yeni Fiyat:</b> {guncel_fiyat:.2f} TL\n\n"
@@ -105,16 +105,15 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Fiyat ve Kupon Takip Botu Aktif!")
+        self.wfile.write(b"Fiyat Botu Aktif!")
 
 if __name__ == "__main__":
     print("Bot başlatılıyor...", flush=True)
-    telegram_mesaj_gonder("🚀 Bot Mobil Modda Yeniden Başlatıldı!")
+    telegram_mesaj_gonder("🚀 Bot Arama Sayfası Modunda Başlatıldı!")
     
     threading.Thread(target=magazalari_tara, daemon=True).start()
     print("Tarama thread'i baslatildi!", flush=True)
     
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
-    print(f"HTTP Sunucu {port} portunda baslatiliyor...", flush=True)
     server.serve_forever()
