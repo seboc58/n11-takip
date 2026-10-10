@@ -82,13 +82,20 @@ def main():
                         )
                         telegram_mesaj_gonder(mesaj)
 
-                # 2. ÜRÜN VE FİYAT TARAMASI
-                urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and "column" in x.lower())
+                # 2. ÜRÜN VE FİYAT TARAMASI (Güncellenmiş Seçici)
+                # n11'in güncel mağaza sayfasındaki ürün listesi konteynerleri ve kartları
+                urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["product", "item", "column", "pl-box"]))
+                
+                # Eğer standart kutular bulunamazsa, link içeren tüm ürün alanlarını esnek tara
+                if not urun_kartlari:
+                    urun_kartlari = soup.select(".listingItem, .column, [data-product-id]")
+
                 print(f"{magaza_adi} - Bulunan ürün kutusu: {len(urun_kartlari)}")
 
                 for kart in urun_kartlari:
-                    baslik_elem = kart.find(["h3", "p", "a"], class_=lambda x: x and ("title" in x.lower() or "productname" in x.lower()))
-                    fiyat_elem = kart.find(["ins", "span", "p"], class_=lambda x: x and ("newprice" in x.lower() or "price" in x.lower()))
+                    # Başlık, fiyat ve link etiketlerini çoklu alternatiflerle arayalım
+                    baslik_elem = kart.find(["h3", "h4", "span", "a"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name", "desc"]))
+                    fiyat_elem = kart.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount", "discount"]))
                     link_elem = kart.find("a", href=True)
 
                     if baslik_elem and fiyat_elem and link_elem:
@@ -117,7 +124,6 @@ def main():
                                 telegram_mesaj_gonder(mesaj)
                                 guncel_veriler[urun_id] = fiyat
                         else:
-                            # İlk taramada ürünü veritabanına kaydet
                             guncel_veriler[urun_id] = fiyat
 
             else:
