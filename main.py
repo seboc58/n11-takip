@@ -10,7 +10,13 @@ DATA_FILE = "fiyatlar.json"
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/magaza/teknosa",
     "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
+    "N11": "https://www.n11.com/magaza/n11",
+    "Korayspor": "https://www.n11.com/magaza/korayspor",
+    "Skechers": "https://www.n11.com/magaza/skechers",
+    "Jack%Jones": "https://www.n11.com/magaza/jack-jones",
     "Braunshop": "https://www.n11.com/magaza/braunshop",
+    "Karaca": "https://www.n11.com/magaza/karaca",
+    "Tefal": "https://www.n11.com/magaza/tefal"
 }
 
 HEADERS = {
