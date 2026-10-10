@@ -18,6 +18,8 @@ MAGAZALAR = {
     "N11": "https://www.n11.com/magaza/n11",
     "Braunshop": "https://www.n11.com/magaza/braunshop",
     "Karaca": "https://www.n11.com/magaza/karaca",
+    "Jack&Jones": "https://www.n11.com/magaza/jack-jones",
+    "Korayspor": "https://www.n11.com/magaza/korayspor",
     "Skechers": "https://www.n11.com/magaza/skechers"
 }
 
