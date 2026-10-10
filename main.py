@@ -10,13 +10,11 @@ DATA_FILE = "fiyatlar.json"
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/magaza/teknosa",
     "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
-    "N11": "https://www.n11.com/magaza/n11",
+    "Braunshop": "https://www.n11.com/magaza/braunshop",
     "Korayspor": "https://www.n11.com/magaza/korayspor",
     "Skechers": "https://www.n11.com/magaza/skechers",
-    "Jack%Jones": "https://www.n11.com/magaza/jack-jones",
-    "Braunshop": "https://www.n11.com/magaza/braunshop",
     "Karaca": "https://www.n11.com/magaza/karaca",
-    "Tefal": "https://www.n11.com/magaza/tefal"
+    "Tefal": "https://www.n11.com/magaza/tefal",
 }
 
 HEADERS = {
@@ -64,51 +62,53 @@ def main():
                 
                 # 1. KUPON TARAMASI
                 kupon_elementleri = soup.find_all(class_=lambda x: x and any(c in x.lower() for c in ["coupon", "voucher", "indirim", "kampanya"]))
-                bulunan_kuponlar = set()
                 for elem in kupon_elementleri:
                     metin = elem.text.strip().replace("\n", " ")
                     if len(metin) > 10 and ("TL" in metin or "%" in metin or "Kupon" in metin):
-                        bulunan_kuponlar.add(metin)
+                        kupon_key = f"kupon_{magaza_adi}_{metin}"
+                        if kupon_key not in eski_veriler:
+                            guncel_veriler[kupon_key] = True
+                            mesaj = (
+                                f"🎟️ <b>YENİ KUPON / KAMPANYA!</b>\n\n"
+                                f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
+                                f"🏷️ <b>Detay:</b> {metin}\n\n"
+                                f"🔗 <a href='{url}'>Mağazaya Git</a>"
+                            )
+                            telegram_mesaj_gonder(mesaj)
 
-                for kupon in bulunan_kuponlar:
-                    kupon_key = f"kupon_{magaza_adi}_{kupon}"
-                    if kupon_key not in eski_veriler:
-                        guncel_veriler[kupon_key] = True
-                        mesaj = (
-                            f"🎟️ <b>YENİ KUPON / KAMPANYA!</b>\n\n"
-                            f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
-                            f"🏷️ <b>Detay:</b> {kupon}\n\n"
-                            f"🔗 <a href='{url}'>Mağazaya Git</a>"
-                        )
-                        telegram_mesaj_gonder(mesaj)
-
-                # 2. ÜRÜN VE FİYAT TARAMASI (Güncellenmiş Seçici)
-                # n11'in güncel mağaza sayfasındaki ürün listesi konteynerleri ve kartları
-                urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["product", "item", "column", "pl-box"]))
-                
-                # Eğer standart kutular bulunamazsa, link içeren tüm ürün alanlarını esnek tara
-                if not urun_kartlari:
-                    urun_kartlari = soup.select(".listingItem, .column, [data-product-id]")
-
+                # 2. ÜRÜN VE FİYAT TARAMASI (Orijinal çalışan kutu seçicisine dönüldü)
+                urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and "column" in x.lower())
                 print(f"{magaza_adi} - Bulunan ürün kutusu: {len(urun_kartlari)}")
 
                 for kart in urun_kartlari:
-                    # Başlık, fiyat ve link etiketlerini çoklu alternatiflerle arayalım
-                    baslik_elem = kart.find(["h3", "h4", "span", "a"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name", "desc"]))
-                    fiyat_elem = kart.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount", "discount"]))
+                    # Kart içerisinden başlık, fiyat ve link elemanlarını esnek çekelim
                     link_elem = kart.find("a", href=True)
+                    if not link_elem:
+                        continue
+                    
+                    urun_link = link_elem["href"]
+                    # n11 linklerinin başında domain yoksa ekleyelim
+                    if urun_link.startswith("/"):
+                        urun_link = "https://www.n11.com" + urun_link
 
-                    if baslik_elem and fiyat_elem and link_elem:
-                        urun_adi = baslik_elem.text.strip()
+                    # Ürün adı (h3, h4 veya title içeren etiketler)
+                    baslik_elem = kart.find(["h3", "h4", "span"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name"]))
+                    urun_adi = baslik_elem.text.strip() if baslik_elem else "İsimsiz Ürün"
+
+                    # Fiyat (ins, span veya price içeren etiketler)
+                    fiyat_elem = kart.find(["ins", "span"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount"]))
+                    if not fiyat_elem:
+                        # Fiyat etiketi bulunamazsa kartın tamamındaki metinlerden bulmaya çalış
+                        fiyat_elem = kart.find(text=lambda t: t and "TL" in t)
+
+                    if fiyat_elem:
                         fiyat_str = fiyat_elem.text.strip().replace(".", "").replace(",", ".").replace("TL", "").strip()
-                        urun_link = link_elem["href"]
-
                         try:
                             fiyat = float(''.join(c for c in fiyat_str if c.isdigit() or c == '.'))
                         except ValueError:
                             continue
 
-                        urun_id = urun_link.split("?")
+                        urun_id = urun_link.split("?")[0] # Sadece ana link ID'sini baz al
                         eski_fiyat = eski_veriler.get(urun_id)
 
                         if eski_fiyat is not None:
@@ -122,9 +122,8 @@ def main():
                                     f"🔗 <a href='{urun_link}'>Ürüne Git</a>"
                                 )
                                 telegram_mesaj_gonder(mesaj)
-                                guncel_veriler[urun_id] = fiyat
-                        else:
-                            guncel_veriler[urun_id] = fiyat
+                        
+                        guncel_veriler[urun_id] = fiyat
 
             else:
                 print(f"{magaza_adi} sayfasına erişilemedi, HTTP kod: {response.status_code}")
