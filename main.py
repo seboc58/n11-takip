@@ -5,10 +5,18 @@ from bs4 import BeautifulSoup
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
+# Dilediğiniz kadar mağazayı buraya ekleyebilirsiniz
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/magaza/teknosa",
     "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
-    "Braunshop": "https://www.n11.com/magaza/braunshop"
+    "N11": "https://www.n11.com/magaza/n11",
+    "Korayspor": "https://www.n11.com/magaza/korayspor",
+    "Skechers": "https://www.n11.com/magaza/Skechers",
+    "Jack%Jones": "https://www.n11.com/magaza/jack-jones",
+    "Braunshop": "https://www.n11.com/magaza/braunshop",
+    # Örnek yeni mağazalar eklemek isterseniz:
+    # "Samsung": "https://www.n11.com/magaza/samsung",
+    # "Xiaomi": "https://www.n11.com/magaza/xiaomi"
 }
 
 HEADERS = {
@@ -36,43 +44,31 @@ def main():
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, "html.parser")
                 
-                # 1. KUPON TARAMASI
-                kupon_elementleri = soup.find_all(class_=lambda x: x and any(c in x.lower() for c in ["coupon", "voucher", "indirim", "kampanya"]))
+                # 1. KUPON / KAMPANYA TARAMASI
+                # Mağaza sayfasındaki kupon, indirim veya kampanya etiketlerini yakalar
+                kupon_elementleri = soup.find_all(class_=lambda x: x and any(c in x.lower() for c in ["coupon", "voucher", "indirim", "kampanya", "meta"]))
+                
+                bulunan_kuponlar = set()
                 for elem in kupon_elementleri:
-                    kupon_metni = elem.text.strip().replace("\n", " ")
-                    if len(kupon_metni) > 8:
-                        mesaj = (
-                            f"🎟️ <b>YENİ MAĞAZA KUPONU!</b>\n\n"
-                            f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
-                            f"🏷️ <b>Detay:</b> {kupon_metni}\n\n"
-                            f"🔗 <a href='{url}'>Mağazaya Git</a>"
-                        )
-                        telegram_mesaj_gonder(mesaj)
+                    metin = elem.text.strip().replace("\n", " ")
+                    # Anlamlı uzunluktaki kupon/kampanya metinlerini filtrele
+                    if len(metin) > 10 and ("TL" in metin or "%" in metin or "Kupon" in metin or "İndirim" in metin):
+                        bulunan_kuponlar.add(metin)
+
+                for kupon in bulunan_kuponlar:
+                    print(f"Kupon Yakalandı -> {magaza_adi}: {kupon}")
+                    mesaj = (
+                        f"🎟️ <b>YENİ KUPON / KAMPANYA BULUNDU!</b>\n\n"
+                        f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
+                        f"🏷️ <b>Detay:</b> {kupon}\n\n"
+                        f"🔗 <a href='{url}'>Mağazaya Git</a>"
+                    )
+                    telegram_mesaj_gonder(mesaj)
 
                 # 2. ÜRÜN TARAMASI
                 urunler = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
-                print(f"Bulunan ürün kutusu: {len(urunler)}")
+                print(f"{magaza_adi} - Bulunan ürün kutusu: {len(urunler)}")
 
-                for urun in urunler:
-                    baslik_etiketi = urun.find(["h3", "h4", "a"], class_=lambda x: x and any(c in x.lower() for c in ["name", "title"]))
-                    fiyat_etiketi = urun.find("ins") or urun.find(class_=lambda x: x and any(c in x.lower() for c in ["price", "newprice", "fiyat"]))
-                    link_etiketi = urun.find("a")
-
-                    if baslik_etiketi and fiyat_etiketi and link_etiketi:
-                        urun_adi = baslik_etiketi.text.strip()
-                        fiyat_text = fiyat_etiketi.text.strip().replace("TL", "").replace("₺", "").replace(".", "").replace(",", ".").strip()
-                        temiz_fiyat = "".join([c for c in fiyat_text if c.isdigit() or c == '.'])
-
-                        try:
-                            guncel_fiyat = float(temiz_fiyat)
-                        except ValueError:
-                            continue
-
-                        if len(urun_adi) < 3 or guncel_fiyat <= 0:
-                            continue
-
-                        # Şimdilik örnek log
-                        print(f"Ürün: {urun_adi} | Fiyat: {guncel_fiyat}")
             else:
                 print(f"{magaza_adi} sayfasına erişilemedi, HTTP kod: {response.status_code}")
         except Exception as e:
