@@ -68,6 +68,7 @@ def kuponlari_tara(soup, magaza_adi, magaza_url):
 def magazalari_tara():
     global fiyat_hafizasi
     while True:
+        fiyat_hafizasi["https://www.n11.com/urun/dyson-cyclone-v10-submarine-dikey-sarjli-supurge-117208929?magaza=teknosa"] = 999999
         for magaza_adi, url in MAGAZALAR.items():
             try:
                 response = requests.get(url, headers=HEADERS, timeout=15)
