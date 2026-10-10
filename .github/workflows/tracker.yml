@@ -2,28 +2,36 @@ name: N11 Fiyat ve Kupon Takip Botu
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Her 15 dakikada bir otomatik çalıştırır
-  workflow_dispatch: # Manuel olarak test etmek için
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
-      - name: Kodları Depodan Çek
+      - name: Repoyu Çek
         uses: actions/checkout@v4
 
-      - name: Python Kurulumu
+      - name: Python Kur
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Gerekli Kütüphaneleri Yükle
+      - name: Kütüphaneleri Yükle
         run: |
+          python -m pip install --upgrade pip
           pip install requests beautifulsoup4
 
       - name: Botu Çalıştır
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python main.py
+
+      - name: Fiyat Hafızasını Kaydet
         run: |
-          python main.py
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add fiyatlar.json || true
+          git commit -m "Fiyat hafızası güncellendi" || true
+          git push || true
