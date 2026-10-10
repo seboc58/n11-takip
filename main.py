@@ -11,25 +11,18 @@ from bs4 import BeautifulSoup
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
-# Takip edilecek mağazalar
+# Mobil n11 linkleri (Engel takılma ihtimali çok düşüktür)
 MAGAZALAR = {
-    "Teknosa": "https://www.n11.com/magaza/teknosa",
-    "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
-    "Braunshop": "https://www.n11.com/magaza/braunshop"
+    "Teknosa": "https://m.n11.com/magaza/teknosa",
+    "Mediamarkt": "https://m.n11.com/magaza/mediamarkt",
+    "Braunshop": "https://m.n11.com/magaza/braunshop"
 }
 
-# Bot korumalarını atlatmak için zenginleştirilmiş modern tarayıcı headers bilgileri
+# Mobil tarayıcı (iPhone Safari) kimliği - n11 bunu engellemez
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1"
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
 }
 
 fiyat_hafizasi = {}
@@ -45,32 +38,27 @@ def telegram_mesaj_gonder(mesaj):
 def magazalari_tara():
     global fiyat_hafizasi
     
-    # Test için hafızaya sahte bir ürün atıyoruz ki ilk yakalamada bildirim atsın
+    # Test için hafızaya sahte ürün atıyoruz
     fiyat_hafizasi["Test Ürünü - Kontrol"] = 999999
 
     while True:
         for magaza_adi, url in MAGAZALAR.items():
             try:
-                print(f"{magaza_adi} taranıyor...", flush=True)
-                # Session kullanarak çerezleri ve oturum akışını koruyoruz
-                session = requests.Session()
-                response = session.get(url, headers=HEADERS, timeout=20, allow_redirects=True)
+                print(f"{magaza_adi} mobil adresten taranıyor...", flush=True)
+                response = requests.get(url, headers=HEADERS, timeout=20)
                 
                 print(f"HTTP Durum Kodu: {response.status_code}", flush=True)
                 
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.text, "html.parser")
                     
-                    # n11 ürün kartları için genişletilmiş arama (li veya div, class adına bağımsız)
-                    urunler = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item", "pro", "cell"]))
-                    print(f"Bulunan potansiyel ürün kutusu sayısı: {len(urunler)}", flush=True)
+                    # Mobil sayfadaki ürün kutuları ve etiketleri
+                    urunler = soup.find_all(["div", "li"], class_=lambda x: x and any(c in x.lower() for c in ["product", "item", "cell"]))
+                    print(f"Bulunan ürün kutusu sayısı: {len(urunler)}", flush=True)
 
                     for urun in urunler:
-                        # Ürün başlığı (h3, h4 veya a etiketleri içindeki başlık alanları)
-                        baslik_etiketi = urun.find(["h3", "h4", "a"], class_=lambda x: x and any(c in x.lower() for c in ["name", "title", "productname"]))
-                        # Fiyat etiketi (ins, span veya fiyat sınıfları)
-                        fiyat_etiketi = urun.find("ins") or urun.find(class_=lambda x: x and any(c in x.lower() for c in ["price", "newprice", "fiyat", "value"]))
-                        # Link
+                        baslik_etiketi = urun.find(["h3", "h4", "span", "a"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name", "content"]))
+                        fiyat_etiketi = urun.find(class_=lambda x: x and any(c in x.lower() for c in ["price", "newprice", "fiyat", "amount"]))
                         link_etiketi = urun.find("a")
 
                         if baslik_etiketi and fiyat_etiketi and link_etiketi:
@@ -121,7 +109,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print("Bot başlatılıyor...", flush=True)
-    telegram_mesaj_gonder("🚀 Bot Güncellendi ve Koruma Atlatma Modu Aktif Edildi!")
+    telegram_mesaj_gonder("🚀 Bot Mobil Modda Yeniden Başlatıldı!")
     
     threading.Thread(target=magazalari_tara, daemon=True).start()
     print("Tarama thread'i baslatildi!", flush=True)
