@@ -11,11 +11,9 @@ from bs4 import BeautifulSoup
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
-# Mağaza sayfaları yerine koruması daha esnek olan n11 arama / kategori sayfaları
 MAGAZALAR = {
-    "Teknosa Ürünleri": "https://www.n11.com/arama?q=teknosa",
-    "MediaMartk Ürünleri": "https://www.n11.com/arama?q=mediamarkt",
-    "Braun Ürünleri": "https://www.n11.com/arama?q=braun"
+    "Teknosa": "https://www.n11.com/magaza/teknosa",
+    "Mediamarkt": "https://www.n11.com/magaza/mediamarkt"
 }
 
 HEADERS = {
@@ -35,24 +33,55 @@ def telegram_mesaj_gonder(mesaj):
     except Exception as e:
         print(f"Telegram gönderme hatasi: {e}", flush=True)
 
+def proxy_ile_istek_at(url):
+    """
+    Ücretsiz public proxy havuzundan taze bir proxy seçip n11'e istek atar.
+    Proxy çalışmazsa doğrudan kendi IP'si ile dener.
+    """
+    try:
+        # Ücretsiz güncel proxy listesi sağlayan API
+        proxy_res = requests.get("https://proxylist.geonode.com/api/proxy-list?limit=5&sort_by=lastChecked&sort_type=desc", timeout=5)
+        proxies_data = proxy_res.json().get("data", [])
+        
+        for p in proxies_data:
+            ip = p.get("ip")
+            port = p.get("port")
+            protocols = p.get("protocols", [])
+            
+            if "http" in protocols or "https" in protocols:
+                proxy_dict = {
+                    "http": f"http://{ip}:{port}",
+                    "https": f"http://{ip}:{port}"
+                }
+                try:
+                    print(f"Proxy deneniyor: {ip}:{port}", flush=True)
+                    resp = requests.get(url, headers=HEADERS, proxies=proxy_dict, timeout=8)
+                    if resp.status_code == 200:
+                        print(f"Proxy başarılı! ({ip}:{port})", flush=True)
+                        return resp
+                except:
+                    continue
+    except Exception as e:
+        print(f"Proxy havuzu alınamadı, direkt istek deneniyor: {e}", flush=True)
+
+    # Proxy'ler başarısız olursa direkt istek at
+    return requests.get(url, headers=HEADERS, timeout=15)
+
 def magazalari_tara():
     global fiyat_hafizasi
     
-    # Test için sahte ürün
     fiyat_hafizasi["Test Ürünü - Kontrol"] = 999999
 
     while True:
         for magaza_adi, url in MAGAZALAR.items():
             try:
-                print(f"{magaza_adi} arama sayfasından taranıyor...", flush=True)
-                response = requests.get(url, headers=HEADERS, timeout=20)
+                print(f"{magaza_adi} taranıyor (Proxy korumalı)...", flush=True)
+                response = proxy_ile_istek_at(url)
                 
                 print(f"HTTP Durum Kodu: {response.status_code}", flush=True)
                 
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.text, "html.parser")
-                    
-                    # n11 arama sonuçlarındaki ürün kartları (genellikle li veya div elementleri)
                     urunler = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
                     print(f"Bulunan ürün kutusu sayısı: {len(urunler)}", flush=True)
 
@@ -84,7 +113,7 @@ def magazalari_tara():
                                 if guncel_fiyat != eski_fiyat:
                                     mesaj = (
                                         f"🔔 <b>FİYAT DEĞİŞTİ!</b>\n\n"
-                                        f"🏪 <b>Kategori:</b> {magaza_adi}\n"
+                                        f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
                                         f"📦 <b>Ürün:</b> {urun_adi}\n"
                                         f"💵 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
                                         f"🏷️ <b>Yeni Fiyat:</b> {guncel_fiyat:.2f} TL\n\n"
@@ -97,7 +126,7 @@ def magazalari_tara():
             except Exception as e:
                 print(f"{magaza_adi} tarama hatasi: {e}", flush=True)
             
-            time.sleep(10)
+            time.sleep(15)
         
         time.sleep(300)
 
@@ -105,11 +134,11 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Fiyat Botu Aktif!")
+        self.wfile.write(b"Fiyat Botu Proxy Modunda Aktif!")
 
 if __name__ == "__main__":
     print("Bot başlatılıyor...", flush=True)
-    telegram_mesaj_gonder("🚀 Bot Arama Sayfası Modunda Başlatıldı!")
+    telegram_mesaj_gonder("🚀 Bot Proxy Destekli Modda Başlatıldı!")
     
     threading.Thread(target=magazalari_tara, daemon=True).start()
     print("Tarama thread'i baslatildi!", flush=True)
