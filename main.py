@@ -11,26 +11,17 @@ from bs4 import BeautifulSoup
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
-# Takip edilecek mağazalar
+# Takip edilecek mağazalar (Testi hızlandırmak için şimdilik sadece Teknosa açık kalsın)
 MAGAZALAR = {
-    "Teknosa": "https://www.n11.com/magaza/teknosa",
-    "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
-    "N11": "https://www.n11.com/magaza/n11",
-    "Braunshop": "https://www.n11.com/magaza/braunshop",
-    "Karaca": "https://www.n11.com/magaza/karaca",
-    "Jack&Jones": "https://www.n11.com/magaza/jack-jones",
-    "Korayspor": "https://www.n11.com/magaza/korayspor",
-    "Skechers": "https://www.n11.com/magaza/skechers"
+    "Teknosa": "https://www.n11.com/magaza/teknosa"
 }
 
-# n11 bot engeline takılmamak ve tam içerik çekmek için zenginleştirilmiş Headers
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
 }
 
-# Hafıza sözlükleri
 fiyat_hafizasi = {}
 kupon_hafizasi = {}
 
@@ -41,47 +32,18 @@ def telegram_mesaj_gonder(mesaj):
     except Exception as e:
         print(f"Telegram gönderme hatasi: {e}")
 
-def kuponlari_tara(soup, magaza_adi, magaza_url):
-    global kupon_hafizasi
-    try:
-        kupon_elementleri = soup.find_all(class_=lambda x: x and any(c in x.lower() for c in ["coupon", "voucher", "indirim", "kampanya"]))
-        
-        for elem in kupon_elementleri:
-            kupon_metni = elem.text.strip().replace("\n", " ")
-            if len(kupon_metni) > 8:
-                hafiza_anahtari = f"{magaza_adi}_{kupon_metni}"
-                
-                if hafiza_anahtari not in kupon_hafizasi:
-                    kupon_hafizasi[hafiza_anahtari] = True
-                    
-                    mesaj = (
-                        f"🎟️ <b>YENİ MAĞAZA KUPONU BULUNDU!</b>\n\n"
-                        f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
-                        f"🏷️ <b>Kupon Detayı:</b> {kupon_metni}\n\n"
-                        f"🔗 <a href='{magaza_url}'>Kuponu Almak İçin Mağazaya Git</a>"
-                    )
-                    telegram_mesaj_gonder(mesaj)
-    except Exception as e:
-        print(f"{magaza_adi} kupon tarama hatasi: {e}")
-
 def magazalari_tara():
     global fiyat_hafizasi
-    
-    # TEST İÇİN: İlk açılışta sahte bir ürün ve yüksek fiyat ekleyelim ki ilk taramada düşüş algılayıp mesaj atsın
-    fiyat_hafizasi["Teknosa - Test Dyson Süpürge"] = 999999
-
     while True:
         for magaza_adi, url in MAGAZALAR.items():
             try:
+                print(f"{magaza_adi} taranıyor...")
                 response = requests.get(url, headers=HEADERS, timeout=15)
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.text, "html.parser")
-
-                    # 1. KUPON TARAMASI
-                    kuponlari_tara(soup, magaza_adi, url)
-
-                    # 2. ÜRÜN FİYAT TARAMASI
                     urunler = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
+                    
+                    print(f"Bulunan hammadde ürün kutusu sayısı: {len(urunler)}")
 
                     for urun in urunler:
                         baslik_etiketi = urun.find(["h3", "h4", "a"], class_=lambda x: x and any(c in x.lower() for c in ["name", "title"]))
@@ -91,7 +53,6 @@ def magazalari_tara():
                         if baslik_etiketi and fiyat_etiketi and link_etiketi:
                             urun_adi = baslik_etiketi.text.strip()
                             fiyat_text = fiyat_etiketi.text.strip().replace("TL", "").replace("₺", "").replace(".", "").replace(",", ".").strip()
-                            
                             temiz_fiyat = "".join([c for c in fiyat_text if c.isdigit() or c == '.'])
 
                             try:
@@ -103,38 +64,39 @@ def magazalari_tara():
                                 continue
 
                             hafiza_anahtari = f"{magaza_adi} - {urun_adi}"
+                            print(f"Ürün Yakalandı -> {urun_adi} | Fiyat: {guncel_fiyat}")
 
                             if hafiza_anahtari not in fiyat_hafizasi:
-                                fiyat_hafizasi[hafiza_anahtari] = guncel_fiyat
+                                # TEST AMAÇLI: İlk yakalanan ürüne yapay olarak 999999 TL yazalım ki fark atıp Telegram'a bassın!
+                                fiyat_hafizasi[hafiza_anahtari] = 999999 
                             else:
                                 eski_fiyat = fiyat_hafizasi[hafiza_anahtari]
                                 if guncel_fiyat != eski_fiyat:
                                     mesaj = (
-                                        f"🔔 <b>FİYAT DEĞİŞTİ!</b>\n\n"
+                                        f"🔔 <b>FİYAT DEĞİŞTİ! (TEST)</b>\n\n"
                                         f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
                                         f"📦 <b>Ürün:</b> {urun_adi}\n"
                                         f"💵 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
                                         f"🏷️ <b>Yeni Fiyat:</b> {guncel_fiyat:.2f} TL\n\n"
-                                        f"🔗 <a href='{link_etiketi.get('href', url)}'>Ürüne Gitmek İçin Tıklayın</a>"
+                                        f"🔗 <a href='{link_etiketi.get('href', url)}'>Ürüne Git</a>"
                                     )
                                     telegram_mesaj_gonder(mesaj)
                                     fiyat_hafizasi[hafiza_anahtari] = guncel_fiyat
             except Exception as e:
                 print(f"{magaza_adi} tarama hatasi: {e}")
             
-            time.sleep(3)
+            time.sleep(5)
         
-        time.sleep(300)
+        time.sleep(60)
 
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Fiyat ve Kupon Takip Botu Aktif!")
+        self.wfile.write(b"Fiyat Botu Aktif!")
 
 if __name__ == "__main__":
-    telegram_mesaj_gonder("🚀 Fiyat ve Kupon Takip Botu Güncellendi ve Başlatıldı!")
-    
+    telegram_mesaj_gonder("🚀 Bot Başlatıldı ve Test Modunda!")
     threading.Thread(target=magazalari_tara, daemon=True).start()
     
     port = int(os.environ.get("PORT", 10000))
