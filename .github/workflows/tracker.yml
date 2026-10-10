@@ -2,7 +2,7 @@ name: N11 Fiyat ve Kupon Takip Botu
 
 on:
   schedule:
-    - cron: '*/30 * * * *' # Her 30 dakikada bir otomatik çalıştırır
+    - cron: '*/15 * * * *' # Her 15 dakikada bir otomatik çalıştırır
   workflow_dispatch: # Manuel olarak test etmek için
 
 jobs:
