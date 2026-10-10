@@ -1,23 +1,16 @@
 import os
+import json
 import requests
 from bs4 import BeautifulSoup
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
+DATA_FILE = "fiyatlar.json"
 
-# Dilediğiniz kadar mağazayı buraya ekleyebilirsiniz
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/magaza/teknosa",
     "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
-    "N11": "https://www.n11.com/magaza/n11",
-    "Korayspor": "https://www.n11.com/magaza/korayspor",
-    "Skechers": "https://www.n11.com/magaza/skechers",
-    "Jack%Jones": "https://www.n11.com/magaza/jack-jones",
     "Braunshop": "https://www.n11.com/magaza/braunshop",
-    "Karaca": "https://www.n11.com/magaza/karaca"
-    # Örnek yeni mağazalar eklemek isterseniz:
-    # "Samsung": "https://www.n11.com/magaza/samsung",
-    # "Xiaomi": "https://www.n11.com/magaza/xiaomi"
 }
 
 HEADERS = {
@@ -34,9 +27,27 @@ def telegram_mesaj_gonder(mesaj):
     except Exception as e:
         print(f"Telegram gönderme hatasi: {e}")
 
+def eski_fiyatlari_yukle():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"JSON okuma hatasi: {e}")
+    return {}
+
+def yeni_fiyatlari_kaydet(veri):
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(veri, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"JSON kaydetme hatasi: {e}")
+
 def main():
     print("Fiyat ve Kupon taraması başlatılıyor...")
-    
+    eski_veriler = eski_fiyatlari_yukle()
+    guncel_veriler = dict(eski_veriler)
+
     for magaza_adi, url in MAGAZALAR.items():
         try:
             print(f"{magaza_adi} taranıyor...")
@@ -45,35 +56,70 @@ def main():
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, "html.parser")
                 
-                # 1. KUPON / KAMPANYA TARAMASI
-                # Mağaza sayfasındaki kupon, indirim veya kampanya etiketlerini yakalar
-                kupon_elementleri = soup.find_all(class_=lambda x: x and any(c in x.lower() for c in ["coupon", "voucher", "indirim", "kampanya", "meta"]))
-                
+                # 1. KUPON TARAMASI
+                kupon_elementleri = soup.find_all(class_=lambda x: x and any(c in x.lower() for c in ["coupon", "voucher", "indirim", "kampanya"]))
                 bulunan_kuponlar = set()
                 for elem in kupon_elementleri:
                     metin = elem.text.strip().replace("\n", " ")
-                    # Anlamlı uzunluktaki kupon/kampanya metinlerini filtrele
-                    if len(metin) > 10 and ("TL" in metin or "%" in metin or "Kupon" in metin or "İndirim" in metin):
+                    if len(metin) > 10 and ("TL" in metin or "%" in metin or "Kupon" in metin):
                         bulunan_kuponlar.add(metin)
 
                 for kupon in bulunan_kuponlar:
-                    print(f"Kupon Yakalandı -> {magaza_adi}: {kupon}")
-                    mesaj = (
-                        f"🎟️ <b>YENİ KUPON / KAMPANYA BULUNDU!</b>\n\n"
-                        f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
-                        f"🏷️ <b>Detay:</b> {kupon}\n\n"
-                        f"🔗 <a href='{url}'>Mağazaya Git</a>"
-                    )
-                    telegram_mesaj_gonder(mesaj)
+                    kupon_key = f"kupon_{magaza_adi}_{kupon}"
+                    if kupon_key not in eski_veriler:
+                        guncel_veriler[kupon_key] = True
+                        mesaj = (
+                            f"🎟️ <b>YENİ KUPON / KAMPANYA!</b>\n\n"
+                            f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
+                            f"🏷️ <b>Detay:</b> {kupon}\n\n"
+                            f"🔗 <a href='{url}'>Mağazaya Git</a>"
+                        )
+                        telegram_mesaj_gonder(mesaj)
 
-                # 2. ÜRÜN TARAMASI
-                urunler = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
-                print(f"{magaza_adi} - Bulunan ürün kutusu: {len(urunler)}")
+                # 2. ÜRÜN VE FİYAT TARAMASI
+                urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and "column" in x.lower())
+                print(f"{magaza_adi} - Bulunan ürün kutusu: {len(urun_kartlari)}")
+
+                for kart in urun_kartlari:
+                    baslik_elem = kart.find(["h3", "p", "a"], class_=lambda x: x and ("title" in x.lower() or "productname" in x.lower()))
+                    fiyat_elem = kart.find(["ins", "span", "p"], class_=lambda x: x and ("newprice" in x.lower() or "price" in x.lower()))
+                    link_elem = kart.find("a", href=True)
+
+                    if baslik_elem and fiyat_elem and link_elem:
+                        urun_adi = baslik_elem.text.strip()
+                        fiyat_str = fiyat_elem.text.strip().replace(".", "").replace(",", ".").replace("TL", "").strip()
+                        urun_link = link_elem["href"]
+
+                        try:
+                            fiyat = float(''.join(c for c in fiyat_str if c.isdigit() or c == '.'))
+                        except ValueError:
+                            continue
+
+                        urun_id = urun_link.split("?")
+                        eski_fiyat = eski_veriler.get(urun_id)
+
+                        if eski_fiyat is not None:
+                            if fiyat < eski_fiyat:
+                                mesaj = (
+                                    f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
+                                    f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
+                                    f"📦 <b>Ürün:</b> {urun_adi}\n"
+                                    f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
+                                    f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
+                                    f"🔗 <a href='{urun_link}'>Ürüne Git</a>"
+                                )
+                                telegram_mesaj_gonder(mesaj)
+                                guncel_veriler[urun_id] = fiyat
+                        else:
+                            # İlk taramada ürünü veritabanına kaydet
+                            guncel_veriler[urun_id] = fiyat
 
             else:
                 print(f"{magaza_adi} sayfasına erişilemedi, HTTP kod: {response.status_code}")
         except Exception as e:
             print(f"{magaza_adi} tarama hatasi: {e}")
+
+    yeni_fiyatlari_kaydet(guncel_veriler)
 
 if __name__ == "__main__":
     main()
