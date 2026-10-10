@@ -11,7 +11,7 @@ MAGAZALAR = {
     "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
     "N11": "https://www.n11.com/magaza/n11",
     "Korayspor": "https://www.n11.com/magaza/korayspor",
-    "Skechers": "https://www.n11.com/magaza/Skechers",
+    "Skechers": "https://www.n11.com/magaza/skechers",
     "Jack%Jones": "https://www.n11.com/magaza/jack-jones",
     "Braunshop": "https://www.n11.com/magaza/braunshop",
     # Örnek yeni mağazalar eklemek isterseniz:
