@@ -1,0 +1,29 @@
+name: N11 Fiyat ve Kupon Takip Botu
+
+on:
+  schedule:
+    - cron: '*/30 * * * *' # Her 30 dakikada bir otomatik çalıştırır
+  workflow_dispatch: # Manuel olarak test etmek için
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodları Depodan Çek
+        uses: actions/checkout@v4
+
+      - name: Python Kurulumu
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Gerekli Kütüphaneleri Yükle
+        run: |
+          pip install requests beautifulsoup4
+
+      - name: Botu Çalıştır
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python main.py
