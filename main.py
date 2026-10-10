@@ -6,12 +6,12 @@ import requests
 from bs4 import BeautifulSoup
 
 # ==========================================
-# AYARLAR (Kendi Bilgilerinizi Girin)
+# AYARLAR
 # ==========================================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
-# Takip edilecek mağazalar (İstediğiniz kadar ekleyebilirsiniz)
+# Takip edilecek mağazalar
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/magaza/teknosa",
     "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
@@ -23,8 +23,11 @@ MAGAZALAR = {
     "Skechers": "https://www.n11.com/magaza/skechers"
 }
 
+# n11 bot engeline takılmamak ve tam içerik çekmek için zenginleştirilmiş Headers
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
 }
 
 # Hafıza sözlükleri
@@ -41,13 +44,12 @@ def telegram_mesaj_gonder(mesaj):
 def kuponlari_tara(soup, magaza_adi, magaza_url):
     global kupon_hafizasi
     try:
-        # n11 mağaza sayfalarındaki olası kupon sınıfları
-        kupon_elementleri = soup.find_all(class_=["coupon-item", "seller-coupon", "voucher-item", "coupon"])
+        # n11 kupon alanları için genişletilmiş arama
+        kupon_elementleri = soup.find_all(class_=lambda x: x and any(c in x.lower() for c in ["coupon", "voucher", "indirim", "kampanya"]))
         
         for elem in kupon_elementleri:
             kupon_metni = elem.text.strip().replace("\n", " ")
-            # Çok kısa veya anlamsız metinleri ele
-            if len(kupon_metni) > 5:
+            if len(kupon_metni) > 8:
                 hafiza_anahtari = f"{magaza_adi}_{kupon_metni}"
                 
                 if hafiza_anahtari not in kupon_hafizasi:
@@ -75,22 +77,33 @@ def magazalari_tara():
                     # 1. KUPON TARAMASI
                     kuponlari_tara(soup, magaza_adi, url)
 
-                    # 2. ÜRÜN FİYAT TARAMASI
-                    urunler = soup.find_all("li", class_="column")
+                    # 2. ÜRÜN FİYAT TARAMASI (Daha esnek yapı: hem li hem div kartları)
+                    urunler = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
 
                     for urun in urunler:
-                        baslik_etiketi = urun.find("h3", class_="productName")
-                        fiyat_etiketi = urun.find("ins") or urun.find("span", class_="newPrice")
+                        # Başlık etiketini farklı olası class'lara göre ara
+                        baslik_etiketi = urun.find(["h3", "h4", "a"], class_=lambda x: x and any(c in x.lower() for c in ["name", "title"]))
+                        
+                        # Fiyat etiketini ara (ins, span, div içindeki fiyat alanları)
+                        fiyat_etiketi = urun.find("ins") or urun.find(class_=lambda x: x and any(c in x.lower() for c in ["price", "newprice", "fiyat"]))
+                        
+                        # Ürün linkini bul
                         link_etiketi = urun.find("a")
 
                         if baslik_etiketi and fiyat_etiketi and link_etiketi:
                             urun_adi = baslik_etiketi.text.strip()
-                            fiyat_text = fiyat_etiketi.text.strip().replace("TL", "").replace(".", "").replace(",", ".").strip()
-                            link = link_etiketi.get("href", "")
+                            fiyat_text = fiyat_etiketi.text.strip().replace("TL", "").replace("₺", "").replace(".", "").replace(",", ".").strip()
+                            
+                            # Fiyat metninden sadece sayısal karakterleri ve noktayı ayıkla
+                            temiz_fiyat = "".join([c for c in fiyat_text if c.isdigit() or c == '.'])
 
                             try:
-                                guncel_fiyat = float(fiyat_text)
+                                guncel_fiyat = float(temiz_fiyat)
                             except ValueError:
+                                continue
+
+                            # Çok kısa başlıkları veya alakasız elementleri ele
+                            if len(urun_adi) < 3 or guncel_fiyat <= 0:
                                 continue
 
                             hafiza_anahtari = f"{magaza_adi} - {urun_adi}"
@@ -106,17 +119,15 @@ def magazalari_tara():
                                         f"📦 <b>Ürün:</b> {urun_adi}\n"
                                         f"💵 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
                                         f"🏷️ <b>Yeni Fiyat:</b> {guncel_fiyat:.2f} TL\n\n"
-                                        f"🔗 <a href='{link}'>Ürüne Gitmek İçin Tıklayın</a>"
+                                        f"🔗 <a href='{link_etiketi.get('href', url)}'>Ürüne Gitmek İçin Tıklayın</a>"
                                     )
                                     telegram_mesaj_gonder(mesaj)
                                     fiyat_hafizasi[hafiza_anahtari] = guncel_fiyat
             except Exception as e:
                 print(f"{magaza_adi} tarama hatasi: {e}")
             
-            # Mağazalar arası 3 saniye bekle
             time.sleep(3)
         
-        # Tüm mağazalar tarandıktan sonra 5 dakika (300 saniye) bekle
         time.sleep(300)
 
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
