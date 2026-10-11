@@ -2,7 +2,7 @@ import os
 import json
 import time
 import re
-from bs4သည်။import BeautifulSoup
+from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -48,8 +48,6 @@ def fiyat_temizle(metin):
     """
     if not metin:
         return 0.0
-    
-    metin_lower = metin.lower()
     
     # Sadece TL içeren veya net fiyat formatına uyan metinleri değerlendir
     m = re.search(r'([\d\.\,]+)\s*TL', metin)
