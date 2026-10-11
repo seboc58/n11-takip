@@ -129,8 +129,7 @@ def main():
                     if not bulunan_fiyatlar:
                         continue
 
-                    # Kartta bulunan fiyatlar içindeki EN DÜŞÜK olanı seç 
-                    # (Böylece normal fiyat yerine her zaman sepetteki/indirimli dip fiyat alınır)
+                    # Kartta bulunan fiyatlar içindeki EN DÜŞÜK olanı seç (Sepet/İndirim fiyatı)
                     fiyat = min(bulunan_fiyatlar)
 
                     if fiyat <= 0:
@@ -164,7 +163,7 @@ def main():
                 print(f"Sayfa {sayfa} hatası: {e}")
                 break
 
-        print(f>== {magaza_adi} Tamamlandı - Toplam: {toplam_urun} ürün)
+        print(f"==> {magaza_adi} Tamamlandı - Toplam: {toplam_urun} ürün")
 
     yeni_fiyatlari_kaydet(guncel_veriler)
     print("\nTüm tarama tamamlandı!")
