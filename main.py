@@ -64,15 +64,10 @@ def main():
             url = f"{base_url}?pg={sayfa}"
             try:
                 response = scraper.get(url, timeout=20)
-                print(f"{magaza_adi} Sayfa {sayfa} - HTTP Durum Kodu: {response.status_code}") # BU SATIRI EKLEYELİM
+                print(f"{magaza_adi} Sayfa {sayfa} - HTTP Durum Kodu: {response.status_code}")
                 
                 if response.status_code != 200:
                     print(f"Engellendi veya ulaşılamadı. İçerik uzunluğu: {len(response.text)}")
-                    break
-                    
-            try:
-                response = scraper.get(url, timeout=20)
-                if response.status_code != 200:
                     break
 
                 soup = BeautifulSoup(response.text, "html.parser")
