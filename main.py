@@ -46,32 +46,30 @@ def yeni_fiyatlari_kaydet(veri):
 
 def fiyat_metnini_temizle(metin):
     """
-    N11 metinlerinden doğrudan TL fiyatını çıkarır.
-    Örn: '1.499,00 TL' -> 1499.00
+    N11 Türkiye fiyat formatını (Örn: 17.999,00 TL veya 14.534,16) tam hassasiyetle float sayıya çevirir.
     """
     if not metin:
         return 0.0
     
-    # Metin içinden sadece geçerli fiyat kalıbını (Örn: 1.250,50 veya 499,00 veya 1200) yakala
-    # TL veya ₺ öncesindeki rakam bloğunu çekmek en güvenlisidir
-    match = re.search(r'([\d\.,]+)\s*(?:TL|₺)?', metin)
+    match = re.search(r'([\d\.,]+)', metin.strip())
     if not match:
         return 0.0
 
     raw_val = match.group(1).strip()
     
     try:
-        # Türkiye formatını (1.250,50) Python float formatına (1250.50) çevir
+        # Virgül varsa kuruş ayracıdır (17.999,00 -> 17999.00)
         if "," in raw_val:
             raw_val = raw_val.replace(".", "").replace(",", ".")
         else:
-            if raw_val.count(".") > 1:
+            # Virgül yoksa ve nokta varsa (17.999 -> 17999) binlik ayracıdır
+            if "." in raw_val and len(raw_val.split(".")[-1]) == 3:
                 raw_val = raw_val.replace(".", "")
 
         val = float(raw_val)
         
-        # Gerçekçi e-ticaret fiyat sınırları: 15 TL ile 250.000 TL arası
-        if 15.0 <= val <= 250000.0:
+        # Gerçekçi fiyat aralığı (50 TL ile 300.000 TL arası)
+        if 50.0 <= val <= 300000.0:
             return val
             
         return 0.0
@@ -79,7 +77,7 @@ def fiyat_metnini_temizle(metin):
         return 0.0
 
 def main():
-    print("Esnek ve Kesin Fiyat Taraması Başlatılıyor...")
+    print("Gelişmiş Çoklu Sayfa ve Temiz Fiyat Taraması Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -95,7 +93,8 @@ def main():
         gorulen_urunler = set()
         toplam_urun = 0
 
-        for sayfa in range(1, 4):
+        # Her mağazadan ilk 6 sayfayı tara (Daha fazla ve çeşitli ürün yakalar)
+        for sayfa in range(1, 7):
             url = f"{base_url}&pg={sayfa}"
             
             try:
@@ -104,11 +103,9 @@ def main():
                     break
 
                 soup = BeautifulSoup(response.text, "html.parser")
-                
-                # N11 ürün kartları (li veya div)
-                urun_kartlari = soup.find_all("li", class_="column")
+                urun_kartlari = soup.find_all(["li", "div"], class_=re.compile(r'(column|pro|product)', re.I))
                 if not urun_kartlari:
-                    urun_kartlari = soup.find_all(["li", "div"], class_=re.compile(r'(column|pro|product)', re.I))
+                    urun_kartlari = soup.find_all("li")
 
                 sayfa_urun_sayisi = 0
                 for kart in urun_kartlari:
@@ -127,7 +124,6 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # Fiyat kapsayıcısını bul
                     fiyat_tag = (
                         kart.find("ins") or 
                         kart.find("div", class_=re.compile(r'(price|fiyat)', re.I)) or 
@@ -165,16 +161,16 @@ def main():
                 if sayfa_urun_sayisi == 0:
                     break
                 
-                time.sleep(0.5)
+                time.sleep(0.4)
 
             except Exception as e:
                 print(f"Sayfa {sayfa} hatası: {e}")
                 break
 
-        print(f"==> {magaza_adi} Tamamlandı - Toplam ürün: {toplam_urun}")
+        print(f"==> {magaza_adi} Tamamlandı - Toplam: {toplam_urun} ürün")
 
     yeni_fiyatlari_kaydet(guncel_veriler)
-    print("\nTüm tarama tamamlandı!")
+    print("\nTüm tarama başarıyla tamamlandı, veritabanı güncellendi!")
 
 if __name__ == "__main__":
     main()
