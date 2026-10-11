@@ -2,7 +2,6 @@ import os
 import json
 import time
 import re
-from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -75,30 +74,17 @@ def fiyat_temizle(metin):
         return 0.0
 
 def main():
-    print("Anti-bot korumalı ve tam kapsamlı tarama başlatılıyor...")
+    print("Kararlı Playwright Tarama Modu Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-infobars",
-                "--window-size=1920,1080"
-            ]
-        )
-        
+        browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080},
-            locale="tr-TR"
+            viewport={"width": 1920, "height": 1080}
         )
-        
         page = context.new_page()
-        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         for magaza_adi, base_url in MAGAZALAR.items():
             print(f"\n{magaza_adi} taranıyor...")
@@ -108,71 +94,54 @@ def main():
                 page.goto(base_url, timeout=60000, wait_until="domcontentloaded")
                 time.sleep(3)
 
-                # Sayfayı adım adım aşağı kaydırarak lazy-load ürünlerin DOM'a düşmesini tetikle
                 for step in range(1, 6):
                     page.evaluate(f"window.scrollTo(0, document.body.scrollHeight * ({step} / 5));")
-                    time.sleep(1.5)
+                    time.sleep(1)
 
-                html_content = page.content()
-                soup = BeautifulSoup(html_content, "html.parser")
-                
-                # Genişletilmiş ürün kartı seçicileri
-                kartlar = soup.select("li.column, div.column, div.pro, div.productItem, li.pro, div.listItem")
+                # Doğrudan sayfadaki tüm ürün bağlantılarını hedefleyelim
+                link_elements = page.locator("a[href*='/urun/']")
+                count = link_elements.count()
                 toplam_urun = 0
 
-                for kart in kartlar:
-                    link_elem = kart.find("a", href=True)
-                    if not link_elem or "/urun/" not in link_elem["href"]:
+                for i in range(count):
+                    try:
+                        el = link_elements.nth(i)
+                        urun_link = el.get_attribute("href")
+                        if not urun_link or "/urun/" not in urun_link:
+                            continue
+
+                        if urun_link.startswith("/"):
+                            urun_link = "https://www.n11.com" + urun_link
+
+                        urun_id = urun_link.split("?")[0]
+                        if urun_id in gorulen_urunler:
+                            continue
+
+                        # Ebeveyn kart elemanını bulup fiyat ve metin çekelim
+                        parent = el.locator("xpath=ancestor::*[contains(@class, 'column') or contains(@class, 'pro') or contains(@class, 'item') or self::li or self::div]").first
+                        card_text = parent.inner_text() if parent.count() > 0 else el.inner_text()
+
+                        fiyat = fiyat_temizle(card_text)
+                        if fiyat <= 0:
+                            continue
+
+                        gorulen_urunler.add(urun_id)
+                        toplam_urun += 1
+
+                        eski_fiyat = eski_veriler.get(urun_id)
+                        if eski_fiyat is not None and fiyat < eski_fiyat:
+                            mesaj = (
+                                f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
+                                f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
+                                f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
+                                f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
+                                f"🔗 <a href='{urun_link}'>Ürüne Git</a>"
+                            )
+                            telegram_mesaj_gonder(mesaj, page)
+
+                        guncel_veriler[str(urun_id)] = fiyat
+                    except:
                         continue
-
-                    urun_link = link_elem["href"]
-                    if urun_link.startswith("/"):
-                        urun_link = "https://www.n11.com" + urun_link
-
-                    urun_id = urun_link.split("?")[0]
-                    if urun_id in gorulen_urunler:
-                        continue
-
-                    baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name"]))
-                    urun_adi = baslik_elem.text.strip() if baslik_elem else "Ürün"
-
-                    # Net fiyat etiketlerini hedefle
-                    fiyat_etiketleri = kart.select("ins, span.newPrice, div.priceContainer ins, span.price, p.price")
-                    fiyatlar = []
-                    
-                    for etiket in fiyat_etiketleri:
-                        f = fiyat_temizle(etiket.text)
-                        if f > 0:
-                            fiyatlar.append(f)
-
-                    if not fiyatlar:
-                        f = fiyat_temizle(kart.get_text())
-                        if f > 0:
-                            fiyatlar.append(f)
-
-                    if not fiyatlar:
-                        continue
-
-                    fiyat = min(fiyatlar)
-                    if fiyat <= 0:
-                        continue
-
-                    gorulen_urunler.add(urun_id)
-                    toplam_urun += 1
-
-                    eski_fiyat = eski_veriler.get(urun_id)
-                    if eski_fiyat is not None and fiyat < eski_fiyat:
-                        mesaj = (
-                            f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
-                            f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
-                            f"📦 <b>Ürün:</b> {urun_adi[:60]}...\n"
-                            f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
-                            f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
-                            f"🔗 <a href='{urun_link}'>Ürüne Git</a>"
-                        )
-                        telegram_mesaj_gonder(mesaj, page)
-
-                    guncel_veriler[str(urun_id)] = fiyat
 
                 print(f"==> {magaza_adi} Tamamlandı - Toplam taranan ürün: {toplam_urun}")
 
@@ -182,7 +151,7 @@ def main():
         browser.close()
 
     yeni_fiyatlari_kaydet(guncel_veriler)
-    print("\nTüm tarama tamamlandı ve güncel fiyatlar kaydedildi.")
+    print("\nTüm tarama tamamlandı.")
 
 if __name__ == "__main__":
     main()
