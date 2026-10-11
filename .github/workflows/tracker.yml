@@ -27,3 +27,12 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python main.py
+
+      - name: Fiyat Hafızasını Kaydet
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull origin main --rebase || echo "Pull atlandı"
+          git add fiyatlar.json
+          git commit -m "Fiyat hafızası güncellendi" || echo "Değişiklik yok"
+          git push origin main
