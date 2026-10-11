@@ -9,7 +9,6 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 DATA_FILE = "fiyatlar.json"
 
-# 🔥 "PRICE_LOW" YERİNE MAĞAZANIN ÖNERİLEN / ÖNE ÇIKAN ÜRÜNLERİ TARGET ALINIYOR
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/arama?q=teknosa",
     "Mediamarkt": "https://www.n11.com/arama?q=mediamarkt",
@@ -46,14 +45,23 @@ def yeni_fiyatlari_kaydet(veri):
         pass
 
 def fiyat_metnini_temizle(metin):
+    """
+    ID'lerin, uzun kodların veya yapışık metinlerin fiyata karışmasını engeller.
+    Gerçekçi bir Türkiye e-ticaret fiyatı (10 TL ile 500.000 TL arası) dışındakileri eler.
+    """
     if not metin:
         return 0.0
     
+    # Sadece sayı, virgül ve nokta bırak
     rakam_temiz = re.sub(r'[^0-9,\.]', '', metin.strip())
     if not rakam_temiz:
         return 0.0
 
     try:
+        # Eğer string çok uzunsa (örneğin ID ile birleşmişse örn: 180001700), bu bir fiyattan öte koddur.
+        if len(rakam_temiz) > 10:
+            return 0.0
+
         if "," in rakam_temiz:
             rakam_temiz = rakam_temiz.replace(".", "").replace(",", ".")
         else:
@@ -61,28 +69,32 @@ def fiyat_metnini_temizle(metin):
                 rakam_temiz = rakam_temiz.replace(".", "")
 
         val = float(rakam_temiz)
-        return val if val >= 10.0 else 0.0  # 10 TL altındaki şüpheli rakamları eler
+        
+        # Gerçekçi e-ticaret fiyat sınırları: 10 TL ile 300.000 TL arası
+        if 10.0 <= val <= 300000.0:
+            return val
+            
+        return 0.0
     except:
         return 0.0
 
 def main():
-    print("Önerilen / Öne Çıkan Ürünler Taraması Başlatılıyor...")
+    print("Hassas ve Hatasız Fiyat Taraması Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Referer": "https://www.n11.com/"
     }
 
     for magaza_adi, base_url in MAGAZALAR.items():
-        print(f"\n[{magaza_adi}] Öne Çıkanlar taranıyor...")
+        print(f"\n[{magaza_adi}] taranıyor...")
         gorulen_urunler = set()
         toplam_urun = 0
 
-        # Her mağazanın öne çıkan ilk 3 sayfasını (en popüler 80-100 ürününü) tara
         for sayfa in range(1, 4):
             url = f"{base_url}&pg={sayfa}"
             
@@ -92,8 +104,11 @@ def main():
                     break
 
                 soup = BeautifulSoup(response.text, "html.parser")
-                urun_kartlari = soup.find_all(["li", "div", "article"])
+                urun_kartlari = soup.find_all(["li", "div", "article"], class_=re.compile(r'(column|defItem|product)', re.I))
                 
+                if not urun_kartlari:
+                    urun_kartlari = soup.find_all("li")
+
                 sayfa_urun_sayisi = 0
                 for kart in urun_kartlari:
                     link_tag = kart.find("a", href=True)
@@ -111,7 +126,9 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    fiyat_tag = kart.find(["ins", "span", "div"], class_=re.compile(r'(newPrice|price|ins|priceContainer)', re.I))
+                    # N11'de indirimli/güncel fiyatın tutulduğu en net etiketler
+                    fiyat_tag = kart.find("ins", class_="newPrice") or kart.find("div", class_="priceContainer") or kart.find("span", class_="price")
+                    
                     if not fiyat_tag:
                         continue
 
@@ -138,7 +155,7 @@ def main():
 
                     guncel_veriler[str(urun_id)] = fiyat
 
-                print(f" -> Sayfa {sayfa} tarandı. Eklenen popüler ürün: {sayfa_urun_sayisi} (Toplam: {toplam_urun})")
+                print(f" -> Sayfa {sayfa} tarandı. Temiz ürün: {sayfa_urun_sayisi} (Toplam: {toplam_urun})")
                 
                 if sayfa_urun_sayisi == 0:
                     break
@@ -149,10 +166,10 @@ def main():
                 print(f"Sayfa {sayfa} hatası: {e}")
                 break
 
-        print(f"==> {magaza_adi} Öne Çıkanlar Tamamlandı - Toplam: {toplam_urun} ürün")
+        print(f"==> {magaza_adi} Tamamlandı - Toplam temiz ürün: {toplam_urun}")
 
     yeni_fiyatlari_kaydet(guncel_veriler)
-    print("\nTüm öne çıkan ürün taraması tamamlandı!")
+    print("\nTüm tarama başarıyla tamamlandı ve fiyatlar arındırıldı.")
 
 if __name__ == "__main__":
     main()
