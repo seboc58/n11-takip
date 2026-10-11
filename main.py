@@ -89,8 +89,10 @@ def main():
 
                 soup = BeautifulSoup(response.text, "html.parser")
                 
-                # Ürün kartlarını esnek bir şekilde yakala
-                urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
+                # N11 güncel mağaza sayfa yapısına uygun ürün kartı seçicileri
+                urun_kartlari = soup.select("li.column, div.column, div.pro, div.productItem")
+                if not urun_kartlari:
+                    urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item", "pro"]))
                 
                 if not urun_kartlari:
                     break
