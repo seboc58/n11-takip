@@ -42,44 +42,69 @@ def yeni_fiyatlari_kaydet(veri):
     except:
         pass
 
-def fiyat_temizle(metin):
+def fiyat_bul_ve_sec(kutu):
     """
-    Watt (W), ml, lt gibi teknik değerleri ve sahte fiyatları kesin olarak eleyen hassas süzgeç.
+    Ürün kartındaki tüm fiyat adaylarını tarar; Watt/teknik değerleri eler.
+    Birden fazla fiyat varsa (Örn: 20.000 TL ve Sepette 19.400 TL) 
+    en düşük (kampanyalı/sepet) fiyatı seçer.
     """
-    if not metin:
-        return 0.0
+    aday_fiyatlar = []
     
-    # Sadece TL içeren veya net fiyat formatına uyan metinleri değerlendir
-    m = re.search(r'([\d\.\,]+)\s*TL', metin)
-    if m:
-        val = m.group(1)
-    else:
-        m_general = re.search(r'([\d\.\,]+)', metin.replace("TL", "").strip())
-        if not m_general:
-            return 0.0
-        val = m_general.group(1)
+    # 1. Önce özel fiyat etiketlerini tara
+    fiyat_elementleri = kutu.find_all(["ins", "span", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "amount", "discount"]))
+    
+    for elem in fiyat_elementleri:
+        metin = elem.text.strip()
+        if re.search(r'\d+\s*(w|watt|ml|lt|gb|mah)\b', metin.lower()):
+            continue
+        
+        matches = re.findall(r'([\d\.\,]+)', metin.replace("TL", "").strip())
+        for m in matches:
+            val = m
+            if "." in val and "," in val:
+                val = val.replace(".", "").replace(",", ".")
+            elif "," in val:
+                val = val.replace(",", ".")
+            else:
+                if val.count(".") == 1 and len(val.split(".")[1]) == 2:
+                    pass
+                elif "." in val:
+                    val = val.replace(".", "")
+            try:
+                f = float(val)
+                if 15.0 <= f <= 300000.0:
+                    aday_fiyatlar.append(f)
+            except:
+                pass
 
-    if "." in val and "," in val:
-        val = val.replace(".", "").replace(",", ".")
-    elif "," in val:
-        val = val.replace(",", ".")
-    else:
-        if val.count(".") == 1 and len(val.split(".")[1]) == 2:
-            pass 
-        elif "." in val:
-            val = val.replace(".", "")
+    # 2. Eğer etiketlerden bulunamadıysa tüm kutu metnine bak
+    if not aday_fiyatlar:
+        kutu_metni = kutu.get_text()
+        if not re.search(r'\d+\s*(w|watt|ml|lt|gb|mah)\b', kutu_metni.lower()):
+            matches = re.findall(r'([\d\.\,]+)\s*TL', kutu_metni)
+            if not matches:
+                matches = re.findall(r'([\d\.\,]+)', kutu_metni)
+            for m in matches:
+                val = m
+                if "." in val and "," in val:
+                    val = val.replace(".", "").replace(",", ".")
+                elif "," in val:
+                    val = val.replace(",", ".")
+                try:
+                    f = float(val)
+                    if 15.0 <= f <= 300000.0:
+                        aday_fiyatlar.append(f)
+                except:
+                    pass
 
-    try:
-        f = float(val)
-        # Teknik Watt değerlerini kesin olarak engelle
-        if f in [1900.0, 1500.0, 2000.0, 1000.0, 2400.0, 3000.0, 1800.0, 1950.0]: 
-            return 0.0
-        return f if 15.0 <= f <= 300000.0 else 0.0
-    except:
-        return 0.0
+    if aday_fiyatlar:
+        # Sepette indirimli / kampanyalı fiyatlar her zaman en düşük olanıdır
+        return min(aday_fiyatlar)
+    
+    return 0.0
 
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Hatadan Arındırılmış Mod)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Sepet İndirimi Öncelikli Mod)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -100,7 +125,7 @@ def main():
                 time.sleep(3)
 
                 onceki_yukseklik = 0
-                for _ in range(10):
+                for _ in range(12):
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
                     time.sleep(1.5)
                     yeni_yukseklik = page.evaluate("document.body.scrollHeight")
@@ -111,18 +136,15 @@ def main():
                 html_content = page.content()
                 soup = BeautifulSoup(html_content, "html.parser")
                 
-                urun_kartlari = soup.select("li.column, div.column, div.pro, div.productItem")
-                if not urun_kartlari:
-                    urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["column", "pro", "product"]))
-
+                urun_linkleri = soup.find_all("a", href=True)
                 toplam_urun = 0
 
-                for kart in urun_kartlari:
-                    link_elem = kart.find("a", href=True)
-                    if not link_elem or "/urun/" not in link_elem["href"]:
+                for a in urun_linkleri:
+                    href = a["href"]
+                    if "/urun/" not in href:
                         continue
 
-                    urun_link = link_elem["href"]
+                    urun_link = href
                     if urun_link.startswith("/"):
                         urun_link = "https://www.n11.com" + urun_link
 
@@ -130,18 +152,16 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
-                    urun_adi = baslik_elem.text.strip() if baslik_elem else (link_elem.text.strip() or "Ürün")
+                    kutu = a.find_parent("li")
+                    if not kutu:
+                        kutu = a.find_parent("div", class_=lambda x: x and any(c in str(x).lower() for c in ["column", "pro", "product", "item", "box"]))
+                    if not kutu:
+                        kutu = a.parent
 
-                    fiyat = 0.0
-                    fiyat_elem = kart.find(["ins", "span", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "amount", "discount"]))
-                    
-                    if fiyat_elem:
-                        fiyat = fiyat_temizle(fiyat_elem.text)
+                    baslik_elem = kutu.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
+                    urun_adi = baslik_elem.text.strip() if baslik_elem else (a.text.strip() or "Ürün")
 
-                    if fiyat <= 0 and not any(w in urun_adi.lower() for w in ["w", "watt", "ml", "lt"]):
-                        fiyat = fiyat_temizle(kart.get_text())
-
+                    fiyat = fiyat_bul_ve_sec(kutu)
                     if fiyat <= 0:
                         continue
 
