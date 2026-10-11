@@ -52,18 +52,30 @@ def main():
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
-    for magaza_adi, url in MAGAZALAR.items():
-        try:
-            print(f"{magaza_adi} taranıyor...")
-            response = requests.get(url, headers=HEADERS, timeout=20)
+    for magaza_adi, base_url in MAGAZALAR.items():
+        print(f"{magaza_adi} taranıyor...")
+        sayfa = 1
+        toplam_urun = 0
+
+        while True:
+            # n11 sayfalama yapısı: ?pg=1, ?pg=2...
+            url = f"{base_url}?pg={sayfa}" if sayfa == 1 else f"{base_url}?pg={sayfa}"
             
-            if response.status_code == 200:
+            try:
+                response = requests.get(url, headers=HEADERS, timeout=20)
+                if response.status_code != 200:
+                    break
+
                 soup = BeautifulSoup(response.text, "html.parser")
                 
-                # Orijinal çalışan ürün kutusu seçicisi
-                urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
-                print(f"{magaza_adi} - Bulunan ürün kutusu: {len(urun_kartlari)}")
+                # n11 mağaza ürün kartları seçicisi
+                urun_kartlari = soup.select("ul.list-items > li, div.column")
+                
+                # Eğer bu sayfada ürün bulunamadıysa döngüyü bitir (Son sayfayı geçtik demektir)
+                if not urun_kartlari:
+                    break
 
+                bulunan_sayfa_urunu = 0
                 for kart in urun_kartlari:
                     link_elem = kart.find("a", href=True)
                     if not link_elem:
@@ -73,12 +85,14 @@ def main():
                     if urun_link.startswith("/"):
                         urun_link = "https://www.n11.com" + urun_link
 
-                    baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name", "desc"]))
+                    # Ürün adını al
+                    baslik_elem = kart.find(["h3", "h4", "span"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name"]))
                     urun_adi = baslik_elem.text.strip() if baslik_elem else "Ürün"
 
-                    fiyat_elem = kart.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount"]))
+                    # Fiyatı al
+                    fiyat_elem = kart.find(["ins", "span", "div"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount"]))
                     if not fiyat_elem:
-                        fiyat_elem = kart.find(text=lambda t: t and "TL" in t)
+                        fiyat_elem = kart.find(string=lambda t: t and "TL" in t)
 
                     if fiyat_elem:
                         fiyat_metni = fiyat_elem.text if hasattr(fiyat_elem, 'text') else str(fiyat_elem)
@@ -104,15 +118,23 @@ def main():
                                 )
                                 telegram_mesaj_gonder(mesaj)
                         
-                        g_id = str(urun_id)
-                        guncel_veriler[g_id] = fiyat
+                        guncel_veriler[str(urun_id)] = fiyat
+                        toplam_urun += 1
+                        bulunan_sayfa_urunu += 1
 
-            else:
-                print(f"{magaza_adi} sayfasına erişilemedi, HTTP kod: {response.status_code}")
-        except Exception as e:
-            print(f"{magaza_adi} tarama hatasi: {e}")
+                # Eğer bu sayfadan hiç ürün çekemediysek veya mağazanın son sayfasına geldiysek döngüyü kır
+                if bulunan_sayfa_urunu == 0 or sayfa > 20:  # Güvenlik sınırı (maksimum 20 sayfa = çok büyük mağazalar için)
+                    break
+
+                sayfa += 1
+            except Exception as e:
+                print(f"{magaza_adi} sayfa {sayfa} hata: {e}")
+                break
+
+        print(f"{magaza_adi} - Toplam taranan ürün: {toplam_urun}")
 
     yeni_fiyatlari_kaydet(guncel_veriler)
+    print("Tarama tamamlandı ve fiyatlar kaydedildi.")
 
 if __name__ == "__main__":
     main()
