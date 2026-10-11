@@ -43,7 +43,7 @@ def yeni_fiyatlari_kaydet(veri):
         pass
 
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Ürün Bazlı İzole Mod)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (İzole Ürün Fiyat Modu)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -92,7 +92,7 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # KESİN ÇÖZÜM: Her ürün için sadece kendi tekil li (veya ürün kartı) kapsayıcısını al
+                    # Ürünün en küçük tekil kapsayıcısını bul
                     kutu = a.find_parent("li")
                     if not kutu:
                         kutu = a.find_parent("div", class_=lambda x: x and any(c in str(x).lower() for c in ["column", "product", "item", "pro", "box"]))
@@ -107,30 +107,40 @@ def main():
                     elif a.text.strip():
                         urun_adi = a.text.strip()
 
-                    # FİYAT AYIKLAMA (Sadece bu ürünün kartına ait alan)
+                    # --- KESİN VE İZOLE FİYAT BULMA ---
                     fiyat = 0.0
-                    fiyat_elem = kutu.find(["ins", "div", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "discount", "amount"]))
                     
-                    if fiyat_elem:
-                        fiyat_metni = fiyat_elem.text.strip()
-                        temiz_metin = fiyat_metni.replace("TL", "").replace("TL.", "").strip()
-                        if "." in temiz_metin and "," in temiz_metin:
-                            temiz_metin = temiz_metin.replace(".", "").replace(",", ".")
-                        elif "," in temiz_metin:
-                            temiz_metin = temiz_metin.replace(",", ".")
-                        
-                        try:
-                            fiyat = float(temiz_metin)
-                        except:
-                            pass
+                    # Sadece bu kutunun EN İÇİNDEKİ fiyat etiketini arıyoruz (ortak alanlara zıplamaz)
+                    fiyat_adaylari = kutu.find_all(["ins", "div", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "discount", "amount"]))
+                    
+                    for fa in fiyat_adaylari:
+                        fiyat_metni = fa.text.strip()
+                        # Eğer metin içinde TL geçiyorsa veya rakam barındırıyorsa incele
+                        if len(fiyat_metni) < 25 and ("TL" in fiyat_metni or "," in fiyat_metni or "." in fiyat_metni):
+                            temiz_metin = fiyat_metni.replace("TL", "").replace("TL.", "").strip()
+                            if "." in temiz_metin and "," in temiz_metin:
+                                temiz_metin = temiz_metin.replace(".", "").replace(",", ".")
+                            elif "," in temiz_metin:
+                                temiz_metin = temiz_metin.replace(",", ".")
+                            
+                            try:
+                                aday_fiyat = float(temiz_metin)
+                                if 15 <= aday_fiyat <= 300000:
+                                    fiyat = aday_fiyat
+                                    break
+                            except:
+                                pass
 
-                    if fiyat <= 0 or fiyat > 300000:
+                    # Eğer etiketle bulunamadıysa kutunun kendi metninde regex ara
+                    if fiyat <= 0:
                         kutu_metni = kutu.get_text()
                         bulunanlar = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*TL', kutu_metni)
                         if bulunanlar:
                             ham_fiyat = bulunanlar[0].replace(".", "").replace(",", ".")
                             try:
-                                fiyat = float(ham_fiyat)
+                                aday_fiyat = float(ham_fiyat)
+                                if 15 <= aday_fiyat <= 300000:
+                                    fiyat = aday_fiyat
                             except:
                                 pass
 
