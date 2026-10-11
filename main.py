@@ -74,17 +74,40 @@ def fiyat_temizle(metin):
         return 0.0
 
 def main():
-    print("Kararlı Playwright Tarama Modu Başlatılıyor...")
+    print("Çerez Simülasyonlu Güvenli Tarama Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-accelerated-2d-canvas",
+                "--no-first-run",
+                "--no-zygote",
+                "--single-process",
+                "--disable-gpu"
+            ]
+        )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080}
+            viewport={"width": 1920, "height": 1080},
+            extra_http_headers={
+                "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+            }
         )
         page = context.new_page()
+
+        # Önce ana sayfaya gidip çerezleri/oturum token'ını alalım
+        try:
+            page.goto("https://www.n11.com", timeout=30000)
+            time.sleep(2)
+        except:
+            pass
 
         for magaza_adi, base_url in MAGAZALAR.items():
             print(f"\n{magaza_adi} taranıyor...")
@@ -92,13 +115,12 @@ def main():
 
             try:
                 page.goto(base_url, timeout=60000, wait_until="domcontentloaded")
-                time.sleep(3)
+                time.sleep(4)
 
                 for step in range(1, 6):
                     page.evaluate(f"window.scrollTo(0, document.body.scrollHeight * ({step} / 5));")
                     time.sleep(1)
 
-                # Doğrudan sayfadaki tüm ürün bağlantılarını hedefleyelim
                 link_elements = page.locator("a[href*='/urun/']")
                 count = link_elements.count()
                 toplam_urun = 0
@@ -117,7 +139,6 @@ def main():
                         if urun_id in gorulen_urunler:
                             continue
 
-                        # Ebeveyn kart elemanını bulup fiyat ve metin çekelim
                         parent = el.locator("xpath=ancestor::*[contains(@class, 'column') or contains(@class, 'pro') or contains(@class, 'item') or self::li or self::div]").first
                         card_text = parent.inner_text() if parent.count() > 0 else el.inner_text()
 
