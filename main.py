@@ -71,7 +71,7 @@ def fiyat_metnini_temizle(metin):
         return 0.0
 
 def main():
-    print("Sepet İndirimi Destekli Fiyat Taraması Başlatılıyor...")
+    print("Akıllı Minimum Fiyat (Sepet İndirimi Odaklı) Taraması Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -117,20 +117,21 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # 1. Öncelik: Sepetteki İndirimli Fiyat Alanı (Örn: sepette, basketPrice, ins)
-                    fiyat_tag = (
-                        kart.find("span", class_=re.compile(r'(basket|sepette)', re.I)) or
-                        kart.find("div", class_=re.compile(r'(basket|sepette)', re.I)) or
-                        kart.find("ins") or 
-                        kart.find("div", class_=re.compile(r'(price|fiyat)', re.I)) or 
-                        kart.find("span", class_=re.compile(r'(price|fiyat|newPrice)', re.I))
-                    )
+                    # Ürün kartındaki TÜM olası fiyat etiketlerini bul
+                    fiyat_tagleri = kart.find_all(["ins", "span", "div"], class_=re.compile(r'(price|fiyat|newPrice|basket|discount)', re.I))
                     
-                    if not fiyat_tag:
+                    bulunan_fiyatlar = []
+                    for ft in fiyat_tagleri:
+                        f = fiyat_metnini_temizle(ft.get_text())
+                        if f > 0:
+                            bulunan_fiyatlar.append(f)
+
+                    if not bulunan_fiyatlar:
                         continue
 
-                    fiyat_metni = fiyat_tag.get_text().strip()
-                    fiyat = fiyat_metnini_temizle(fiyat_metni)
+                    # Kartta bulunan fiyatlar içindeki EN DÜŞÜK olanı seç 
+                    # (Böylece normal fiyat yerine her zaman sepetteki/indirimli dip fiyat alınır)
+                    fiyat = min(bulunan_fiyatlar)
 
                     if fiyat <= 0:
                         continue
@@ -163,7 +164,7 @@ def main():
                 print(f"Sayfa {sayfa} hatası: {e}")
                 break
 
-        print(f"==> {magaza_adi} Tamamlandı - Toplam: {toplam_urun} ürün")
+        print(f>== {magaza_adi} Tamamlandı - Toplam: {toplam_urun} ürün)
 
     yeni_fiyatlari_kaydet(guncel_veriler)
     print("\nTüm tarama tamamlandı!")
