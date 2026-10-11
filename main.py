@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import re
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
@@ -42,7 +43,7 @@ def yeni_fiyatlari_kaydet(veri):
         pass
 
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Tüm Sayfalar Modu)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Kaydırma/Scroll Modu)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -56,106 +57,105 @@ def main():
 
         for magaza_adi, base_url in MAGAZALAR.items():
             print(f"\n{magaza_adi} taranıyor...")
-            sayfa = 1
-            toplam_urun = 0
             gorulen_urunler = set()
-            bos_sayfa_sayaci = 0
 
-            # Büyük mağazalar için sayfa sınırını artırıyoruz (örn: 30 sayfa)
-            while sayfa <= 30:
-                url = f"{base_url}?pg={sayfa}"
-                try:
-                    page.goto(url, timeout=60000, wait_until="domcontentloaded")
-                    time.sleep(2.5)
+            try:
+                page.goto(base_url, timeout=60000, wait_until="domcontentloaded")
+                time.sleep(3)
+
+                # Sayfanın en altına yavaşça kaydırarak tüm ürünlerin yüklenmesini sağla (Lazy Load aşımı)
+                onceki_yukseklik = 0
+                for _ in range(15):
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(2)
+                    yeni_yukseklik = page.evaluate("document.body.scrollHeight")
+                    if yeni_yukseklik == onceki_yukseklik:
+                        break
+                    onceki_yukseklik = yeni_yukseklik
+
+                html_content = page.content()
+                soup = BeautifulSoup(html_content, "html.parser")
+                
+                urun_linkleri = soup.find_all("a", href=True)
+                toplam_urun = 0
+
+                for a in urun_linkleri:
+                    href = a["href"]
+                    if "/urun/" not in href:
+                        continue
+
+                    urun_link = href
+                    if urun_link.startswith("/"):
+                        urun_link = "https://www.n11.com" + urun_link
+
+                    urun_id = urun_link.split("?")[0]
+                    if urun_id in gorulen_urunler:
+                        continue
+
+                    kutu = a.find_parent(["li", "div", "article"])
+                    if not kutu:
+                        kutu = a
+
+                    # Ürün adı
+                    urun_adi = "Ürün"
+                    title_elem = kutu.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
+                    if title_elem:
+                        urun_adi = title_elem.text.strip()
+                    elif a.text.strip():
+                        urun_adi = a.text.strip()
+
+                    # Fiyat ayıklama
+                    fiyat = 0.0
+                    fiyat_elem = kutu.find(["ins", "div", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "discount", "amount"]))
                     
-                    html_content = page.content()
-                    soup = BeautifulSoup(html_content, "html.parser")
-                    
-                    urun_linkleri = soup.find_all("a", href=True)
-                    sayfa_yeni_urun = 0
-
-                    for a in urun_linkleri:
-                        href = a["href"]
-                        if "/urun/" not in href:
-                            continue
-
-                        urun_link = href
-                        if urun_link.startswith("/"):
-                            urun_link = "https://www.n11.com" + urun_link
-
-                        urun_id = urun_link.split("?")[0]
-                        if urun_id in gorulen_urunler:
-                            continue
-
-                        kutu = a.find_parent(["li", "div", "article"])
-                        if not kutu:
-                            kutu = a
-
-                        urun_adi = "Ürün"
-                        title_elem = kutu.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
-                        if title_elem:
-                            urun_adi = title_elem.text.strip()
-                        elif a.text.strip():
-                            urun_adi = a.text.strip()
-
-                        fiyat = 0.0
-                        fiyat_elem = kutu.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "new", "amount", "discount"]))
-                        
-                        if fiyat_elem:
-                            fiyat_metni = fiyat_elem.text.replace(".", "").replace(",", ".").replace("TL", "").strip()
+                    if fiyat_elem:
+                        fiyat_metni = fiyat_elem.text.strip()
+                        temiz_metin = fiyat_metni.replace("TL", "").replace(".", "").replace(",", ".").strip()
+                        sayi_eslesmesi = re.search(r'\d+(\.\d+)?', temiz_metin)
+                        if sayi_eslesmesi:
                             try:
-                                fiyat = float(''.join(c for c in fiyat_metni if c.isdigit() or c == '.'))
+                                fiyat = float(sayi_eslesmesi.group())
                             except:
                                 pass
+
+                    if fiyat <= 0 or fiyat > 300000:
+                        kutu_metni = kutu.get_text()
+                        bulunanlar = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*TL', kutu_metni)
+                        if not bulunanlar:
+                            bulunanlar = re.findall(r'(\d+)\s*TL', kutu_metni)
                         
-                        if fiyat <= 0:
-                            import re
-                            kutu_metni = kutu.get_text()
-                            fiyat_bulunanlar = re.findall(r'([\d\.]+,\d{2})\s*TL', kutu_metni)
-                            if fiyat_bulunanlar:
-                                temiz_fiyat = fiyat_bulunanlar[0].replace(".", "").replace(",", ".")
-                                try:
-                                    fiyat = float(temiz_fiyat)
-                                except:
-                                    pass
+                        if bulunanlar:
+                            ham_fiyat = bulunanlar[0].replace(".", "").replace(",", ".")
+                            try:
+                                fiyat = float(ham_fiyat)
+                            except:
+                                pass
 
-                        if fiyat <= 0:
-                            continue
+                    if fiyat < 15 or fiyat > 300000:
+                        continue
 
-                        gorulen_urunler.add(urun_id)
-                        sayfa_yeni_urun += 1
-                        toplam_urun += 1
+                    gorulen_urunler.add(urun_id)
+                    toplam_urun += 1
 
-                        eski_fiyat = eski_veriler.get(urun_id)
-                        if eski_fiyat is not None and fiyat < eski_fiyat:
-                            mesaj = (
-                                f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
-                                f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
-                                f"📦 <b>Ürün:</b> {urun_adi[:60]}...\n"
-                                f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
-                                f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
-                                f"🔗 <a href='{urun_link}'>Ürüne Git</a>"
-                            )
-                            telegram_mesaj_gonder(mesaj, page)
+                    # Önceki fiyat durumu ile karşılaştırma
+                    eski_fiyat = eski_veriler.get(urun_id)
+                    if eski_fiyat is not None and fiyat < eski_fiyat:
+                        mesaj = (
+                            f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
+                            f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
+                            f"📦 <b>Ürün:</b> {urun_adi[:60]}...\n"
+                            f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
+                            f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
+                            f"🔗 <a href='{urun_link}'>Ürüne Git</a>"
+                        )
+                        telegram_mesaj_gonder(mesaj, page)
 
-                        guncel_veriler[str(urun_id)] = fiyat
+                    guncel_veriler[str(urun_id)] = fiyat
 
-                    print(f"-> Sayfa {sayfa} tarandı. Yeni ürün: {sayfa_yeni_urun} (Toplam: {toplam_urun})")
+                print(f"==> {magaza_adi} Tamamlandı - Toplam taranan ürün: {toplam_urun}")
 
-                    # Eğer bu sayfada hiç yeni ürün bulunamadıysa mağazanın sonuna gelmişizdir
-                    if sayfa_yeni_urun == 0:
-                        bos_sayfa_sayaci += 1
-                        if bos_sayfa_sayaci >= 2: # Üst üste 2 boş sayfa gelirse döngüyü bitir
-                            break
-                    else:
-                        bos_sayfa_sayaci = 0
-
-                    sayfa += 1
-                except Exception as e:
-                    print(f"{magaza_adi} sayfa {sayfa} hata: {e}")
-                    break
-
-            print(f"==> {magaza_adi} Tamamlandı - Toplam taranan ürün: {toplam_urun}")
+            except Exception as e:
+                print(f"{magaza_adi} taranırken hata: {e}")
 
         browser.close()
 
