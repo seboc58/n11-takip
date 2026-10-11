@@ -42,69 +42,63 @@ def yeni_fiyatlari_kaydet(veri):
     except:
         pass
 
-def fiyat_bul_ve_sec(kutu):
-    """
-    Ürün kartındaki tüm fiyat adaylarını tarar; Watt/teknik değerleri eler.
-    Birden fazla fiyat varsa (Örn: 20.000 TL ve Sepette 19.400 TL) 
-    en düşük (kampanyalı/sepet) fiyatı seçer.
-    """
-    aday_fiyatlar = []
+def fiyat_temizle(metin):
+    if not metin:
+        return 0.0
     
-    # 1. Önce özel fiyat etiketlerini tara
-    fiyat_elementleri = kutu.find_all(["ins", "span", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "amount", "discount"]))
+    metin_lower = metin.lower()
+    # Watt veya teknik ölçü birimi içeren metinleri direkt ele
+    if re.search(r'\d+\s*(w|watt|ml|lt|gb|mah|cm|parça)\b', metin_lower):
+        return 0.0
+
+    m = re.search(r'([\d\.\,]+)\s*TL', metin)
+    if m:
+        val = m.group(1)
+    else:
+        m_general = re.search(r'([\d\.\,]+)', metin.replace("TL", "").strip())
+        if not m_general:
+            return 0.0
+        val = m_general.group(1)
+
+    if "." in val and "," in val:
+        val = val.replace(".", "").replace(",", ".")
+    elif "," in val:
+        val = val.replace(",", ".")
+    else:
+        if val.count(".") == 1 and len(val.split(".")[1]) == 2:
+            pass 
+        elif "." in val:
+            val = val.replace(".", "")
+
+    try:
+        f = float(val)
+        # 15 TL ile 300.000 TL arasındaki gerçek fiyatları kabul et (kargo/banner fiyatlarını ele)
+        return f if 15.0 <= f <= 300000.0 else 0.0
+    except:
+        return 0.0
+
+def fiyat_bul_kesin(kutu):
+    """
+    Sadece N11'in gerçek ürün fiyat etiketlerini hedef alır, 
+    rastgele metinleri veya kargo ücretlerini fiyat olarak almaz.
+    """
+    # N11'in fiyat barındıran spesifik etiket sınıfları
+    fiyat_elementleri = kutu.find_all(["ins", "span", "div", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "amount", "discount", "p-price"]))
     
+    adaylar = []
     for elem in fiyat_elementleri:
-        metin = elem.text.strip()
-        if re.search(r'\d+\s*(w|watt|ml|lt|gb|mah)\b', metin.lower()):
-            continue
+        f = fiyat_temizle(elem.text)
+        if f > 0:
+            adaylar.append(f)
+            
+    if adaylar:
+        # Eğer sepette indirimli ve normal fiyat ikisi de bulunduysa en düşük (kampanyalı) olanı seç
+        return min(adaylar)
         
-        matches = re.findall(r'([\d\.\,]+)', metin.replace("TL", "").strip())
-        for m in matches:
-            val = m
-            if "." in val and "," in val:
-                val = val.replace(".", "").replace(",", ".")
-            elif "," in val:
-                val = val.replace(",", ".")
-            else:
-                if val.count(".") == 1 and len(val.split(".")[1]) == 2:
-                    pass
-                elif "." in val:
-                    val = val.replace(".", "")
-            try:
-                f = float(val)
-                if 15.0 <= f <= 300000.0:
-                    aday_fiyatlar.append(f)
-            except:
-                pass
-
-    # 2. Eğer etiketlerden bulunamadıysa tüm kutu metnine bak
-    if not aday_fiyatlar:
-        kutu_metni = kutu.get_text()
-        if not re.search(r'\d+\s*(w|watt|ml|lt|gb|mah)\b', kutu_metni.lower()):
-            matches = re.findall(r'([\d\.\,]+)\s*TL', kutu_metni)
-            if not matches:
-                matches = re.findall(r'([\d\.\,]+)', kutu_metni)
-            for m in matches:
-                val = m
-                if "." in val and "," in val:
-                    val = val.replace(".", "").replace(",", ".")
-                elif "," in val:
-                    val = val.replace(",", ".")
-                try:
-                    f = float(val)
-                    if 15.0 <= f <= 300000.0:
-                        aday_fiyatlar.append(f)
-                except:
-                    pass
-
-    if aday_fiyatlar:
-        # Sepette indirimli / kampanyalı fiyatlar her zaman en düşük olanıdır
-        return min(aday_fiyatlar)
-    
     return 0.0
 
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Sepet İndirimi Öncelikli Mod)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Kesin Fiyat Etiketi Modu)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -161,7 +155,7 @@ def main():
                     baslik_elem = kutu.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
                     urun_adi = baslik_elem.text.strip() if baslik_elem else (a.text.strip() or "Ürün")
 
-                    fiyat = fiyat_bul_ve_sec(kutu)
+                    fiyat = fiyat_bul_kesin(kutu)
                     if fiyat <= 0:
                         continue
 
