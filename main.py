@@ -1,6 +1,6 @@
 import os
 import json
-import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -8,8 +8,7 @@ CHAT_ID = os.environ.get("CHAT_ID")
 DATA_FILE = "fiyatlar.json"
 
 MAGAZALAR = {
-    "Teknosa": "https://www.n11.com/arama?q=teknosa",
-    "N11": "https://www.n11.com/magaza/n11",
+    "Teknosa": "https://www.n11.com/magaza/teknosa",
     "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
     "Braunshop": "https://www.n11.com/magaza/braunshop",
     "Korayspor": "https://www.n11.com/magaza/korayspor",
@@ -18,17 +17,19 @@ MAGAZALAR = {
     "Tefal": "https://www.n11.com/magaza/tefal",
 }
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://www.n11.com/"
-}
+# Cloudflare engelini aşmak için akıllı scraper başlatıyoruz
+scraper = cloudscraper.create_scraper(
+    browser={
+        'browser': 'chrome',
+        'platform': 'windows',
+        'desktop': True
+    }
+)
 
 def telegram_mesaj_gonder(mesaj):
     try:
         api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(api_url, data={"chat_id": CHAT_ID, "text": mesaj, "parse_mode": "HTML"}, timeout=10)
+        scraper.post(api_url, data={"chat_id": CHAT_ID, "text": mesaj, "parse_mode": "HTML"}, timeout=10)
     except Exception as e:
         print(f"Telegram gönderme hatasi: {e}")
 
@@ -59,21 +60,18 @@ def main():
         toplam_urun = 0
         gorulen_urunler = set()
 
-        while sayfa <= 10:  # En fazla 10 sayfa tara
-            url = f"{base_url}&pg={sayfa}" if "?" in base_url else f"{base_url}?pg={sayfa}"
+        while sayfa <= 20:  # Büyük mağazalar için güvenli sayfa sınırı
+            url = f"{base_url}?pg={sayfa}"
             
             try:
-                response = requests.get(url, headers=HEADERS, timeout=20)
+                response = scraper.get(url, timeout=20)
                 if response.status_code != 200:
                     break
 
                 soup = BeautifulSoup(response.text, "html.parser")
                 
-                # N11 arama ve liste sayfalarındaki standart ürün kartları
-                urun_kartlari = soup.select("div.column, li.column, div.pro")
-                if not urun_kartlari:
-                    # Alternatif esnek arama
-                    urun_kartlari = soup.find_all("div", class_=lambda x: x and "product" in x.lower())
+                # Ürün kartlarını esnek bir şekilde yakala
+                urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
                 
                 if not urun_kartlari:
                     break
@@ -85,22 +83,22 @@ def main():
                         continue
                     
                     urun_link = link_elem["href"]
-                    if not urun_link.startswith("http"):
+                    if urun_link.startswith("/"):
                         urun_link = "https://www.n11.com" + urun_link
 
                     urun_id = urun_link.split("?")[0]
+                    
+                    # Eğer döngü başa sarıp aynı ürünleri tekrar gösterdiyse dur
                     if urun_id in gorulen_urunler:
                         continue
                     
                     gorulen_urunler.add(urun_id)
                     sayfa_yeni_urun += 1
 
-                    # Başlık bulma
-                    baslik_elem = kart.find(["h3", "h4", "span"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name"]))
+                    baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name", "desc"]))
                     urun_adi = baslik_elem.text.strip() if baslik_elem else "Ürün"
 
-                    # Fiyat bulma
-                    fiyat_elem = kart.find(["ins", "span", "div"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount"]))
+                    fiyat_elem = kart.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount"]))
                     if not fiyat_elem:
                         fiyat_elem = kart.find(string=lambda t: t and "TL" in t)
 
@@ -122,7 +120,7 @@ def main():
                             if fiyat < eski_fiyat:
                                 mesaj = (
                                     f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
-                                    f"🏪 <b>Mağaza/Arama:</b> {magaza_adi}\n"
+                                    f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
                                     f"📦 <b>Ürün:</b> {urun_adi}\n"
                                     f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
                                     f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
