@@ -17,14 +17,31 @@ MAGAZALAR = {
     "Tefal": "https://www.n11.com/magaza/tefal",
 }
 
-# Cloudflare engelini aşmak için akıllı scraper başlatıyoruz
+# Cloudflare 403 engelini aşmak için gerçek tarayıcı simülasyonu ve özel başlıklar
 scraper = cloudscraper.create_scraper(
     browser={
         'browser': 'chrome',
         'platform': 'windows',
-        'desktop': True
+        'desktop': True,
+        'mobile': False
     }
 )
+
+scraper.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://www.n11.com/",
+    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1"
+})
 
 def telegram_mesaj_gonder(mesaj):
     try:
