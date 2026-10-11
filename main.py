@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import cloudscraper
 from bs4 import BeautifulSoup
 
@@ -17,7 +18,7 @@ MAGAZALAR = {
     "Tefal": "https://www.n11.com/magaza/tefal",
 }
 
-# Cloudflare 403 engelini aşmak için gerçek tarayıcı simülasyonu ve özel başlıklar
+# Cloudflare engelini aşmak için gelişmiş tarayıcı simülasyonu
 scraper = cloudscraper.create_scraper(
     browser={
         'browser': 'chrome',
@@ -77,9 +78,10 @@ def main():
         toplam_urun = 0
         gorulen_urunler = set()
 
-        while sayfa <= 20:  # Büyük mağazalar için güvenli sayfa sınırı
+        while sayfa <= 15:  
             url = f"{base_url}?pg={sayfa}"
             try:
+                time.sleep(1.5)  # Cloudflare tetiklememek için küçük gecikme
                 response = scraper.get(url, timeout=20)
                 print(f"{magaza_adi} Sayfa {sayfa} - HTTP Durum Kodu: {response.status_code}")
                 
@@ -89,17 +91,19 @@ def main():
 
                 soup = BeautifulSoup(response.text, "html.parser")
                 
-                # N11'de içinde ürün linki geçen tüm olası konteynerleri yakala
-                all_links = soup.find_all("a", href=True)
-                urun_kartlari = []
-                for a in all_links:
-                    href = a["href"]
-                    if "/urun/" in href:
-                        # Ürünün en yakın ana kapsayıcısını bul
-                        parent = a.find_parent(["div", "li", "article"])
-                        if parent and parent not in urun_kartlari:
-                            urun_kartlari.append(parent)
-                
+                # Doğrudan ürün kartı elementlerini ve li/div yapılarını yakala
+                urun_kartlari = soup.select("li.column, div.column, div.pro, div.productItem, div.group")
+                if not urun_kartlari:
+                    urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item", "pro", "cell"]))
+
+                if not urun_kartlari:
+                    # Alternatif: Sayfadaki tüm ürün linklerinin kapsayıcılarını al
+                    for a in soup.find_all("a", href=True):
+                        if "/urun/" in a["href"]:
+                            p = a.find_parent(["div", "li", "article"])
+                            if p and p not in urun_kartlari:
+                                urun_kartlari.append(p)
+
                 if not urun_kartlari:
                     break
 
@@ -126,10 +130,10 @@ def main():
 
                     baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name", "desc"]))
                     if not baslik_elem:
-                        baslik_elem = kart.find("h3") or kart.find("h4")
+                        baslik_elem = kart.find("h3") or kart.find("h4") or kart.find("a")
                     urun_adi = baslik_elem.text.strip() if baslik_elem else "Ürün"
 
-                    fiyat_elem = kart.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount"]))
+                    fiyat_elem = kart.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount", "discount"]))
                     if not fiyat_elem:
                         fiyat_elem = kart.find(string=lambda t: t and "TL" in t)
 
