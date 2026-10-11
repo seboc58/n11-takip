@@ -89,10 +89,16 @@ def main():
 
                 soup = BeautifulSoup(response.text, "html.parser")
                 
-                # N11 güncel mağaza sayfa yapısına uygun ürün kartı seçicileri
-                urun_kartlari = soup.select("li.column, div.column, div.pro, div.productItem")
-                if not urun_kartlari:
-                    urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item", "pro"]))
+                # N11'de içinde ürün linki geçen tüm olası konteynerleri yakala
+                all_links = soup.find_all("a", href=True)
+                urun_kartlari = []
+                for a in all_links:
+                    href = a["href"]
+                    if "/urun/" in href:
+                        # Ürünün en yakın ana kapsayıcısını bul
+                        parent = a.find_parent(["div", "li", "article"])
+                        if parent and parent not in urun_kartlari:
+                            urun_kartlari.append(parent)
                 
                 if not urun_kartlari:
                     break
@@ -107,9 +113,11 @@ def main():
                     if urun_link.startswith("/"):
                         urun_link = "https://www.n11.com" + urun_link
 
+                    if "/urun/" not in urun_link:
+                        continue
+
                     urun_id = urun_link.split("?")[0]
                     
-                    # Eğer döngü başa sarıp aynı ürünleri tekrar gösterdiyse dur
                     if urun_id in gorulen_urunler:
                         continue
                     
@@ -117,6 +125,8 @@ def main():
                     sayfa_yeni_urun += 1
 
                     baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name", "desc"]))
+                    if not baslik_elem:
+                        baslik_elem = kart.find("h3") or kart.find("h4")
                     urun_adi = baslik_elem.text.strip() if baslik_elem else "Ürün"
 
                     fiyat_elem = kart.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount"]))
