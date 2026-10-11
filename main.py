@@ -62,7 +62,14 @@ def main():
 
         while sayfa <= 20:  # Büyük mağazalar için güvenli sayfa sınırı
             url = f"{base_url}?pg={sayfa}"
-            
+            try:
+                response = scraper.get(url, timeout=20)
+                print(f"{magaza_adi} Sayfa {sayfa} - HTTP Durum Kodu: {response.status_code}") # BU SATIRI EKLEYELİM
+                
+                if response.status_code != 200:
+                    print(f"Engellendi veya ulaşılamadı. İçerik uzunluğu: {len(response.text)}")
+                    break
+                    
             try:
                 response = scraper.get(url, timeout=20)
                 if response.status_code != 200:
