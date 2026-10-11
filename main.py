@@ -21,7 +21,6 @@ MAGAZALAR = {
 def telegram_mesaj_gonder(mesaj, page_client):
     try:
         api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        # Telegram mesajını playwright context üzerinden güvenle gönderelim
         page_client.request.post(api_url, data={"chat_id": CHAT_ID, "text": mesaj, "parse_mode": "HTML"})
     except Exception as e:
         print(f"Telegram gönderme hatasi: {e}")
@@ -43,12 +42,11 @@ def yeni_fiyatlari_kaydet(veri):
         pass
 
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Playwright Motoru)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Tüm Sayfalar Modu)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
     with sync_playwright() as p:
-        # Gerçek bir tarayıcı başlatıyoruz (Cloudflare bunu insan olarak görür)
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -57,23 +55,22 @@ def main():
         page = context.new_page()
 
         for magaza_adi, base_url in MAGAZALAR.items():
-            print(f"{magaza_adi} taranıyor...")
+            print(f"\n{magaza_adi} taranıyor...")
             sayfa = 1
             toplam_urun = 0
             gorulen_urunler = set()
+            bos_sayfa_sayaci = 0
 
-            while sayfa <= 10:
+            # Büyük mağazalar için sayfa sınırını artırıyoruz (örn: 30 sayfa)
+            while sayfa <= 30:
                 url = f"{base_url}?pg={sayfa}"
                 try:
                     page.goto(url, timeout=60000, wait_until="domcontentloaded")
-                    time.sleep(3) # Sayfanın tamamen yüklenmesi ve ürünlerin DOM'a düşmesi için kısa bekleme
+                    time.sleep(2.5)
                     
                     html_content = page.content()
-                    print(f"{magaza_adi} Sayfa {sayfa} - Başarıyla yüklendi. Uzunluk: {len(html_content)}")
-
                     soup = BeautifulSoup(html_content, "html.parser")
                     
-                    # İçinde /urun/ geçen tüm linkleri bul
                     urun_linkleri = soup.find_all("a", href=True)
                     sayfa_yeni_urun = 0
 
@@ -94,7 +91,6 @@ def main():
                         if not kutu:
                             kutu = a
 
-                        # Ürün adı
                         urun_adi = "Ürün"
                         title_elem = kutu.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
                         if title_elem:
@@ -102,7 +98,6 @@ def main():
                         elif a.text.strip():
                             urun_adi = a.text.strip()
 
-                        # Fiyat bulma
                         fiyat = 0.0
                         fiyat_elem = kutu.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "new", "amount", "discount"]))
                         
@@ -145,20 +140,27 @@ def main():
 
                         guncel_veriler[str(urun_id)] = fiyat
 
+                    print(f"-> Sayfa {sayfa} tarandı. Yeni ürün: {sayfa_yeni_urun} (Toplam: {toplam_urun})")
+
+                    # Eğer bu sayfada hiç yeni ürün bulunamadıysa mağazanın sonuna gelmişizdir
                     if sayfa_yeni_urun == 0:
-                        break
+                        bos_sayfa_sayaci += 1
+                        if bos_sayfa_sayaci >= 2: # Üst üste 2 boş sayfa gelirse döngüyü bitir
+                            break
+                    else:
+                        bos_sayfa_sayaci = 0
 
                     sayfa += 1
                 except Exception as e:
                     print(f"{magaza_adi} sayfa {sayfa} hata: {e}")
                     break
 
-            print(f"{magaza_adi} - Toplam taranan ürün: {toplam_urun}")
+            print(f"==> {magaza_adi} Tamamlandı - Toplam taranan ürün: {toplam_urun}")
 
         browser.close()
 
     yeni_fiyatlari_kaydet(guncel_veriler)
-    print("Tarama tamamlandı ve fiyatlar kaydedildi.")
+    print("\nTüm tarama tamamlandı ve fiyatlar kaydedildi.")
 
 if __name__ == "__main__":
     main()
