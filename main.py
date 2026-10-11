@@ -46,32 +46,32 @@ def yeni_fiyatlari_kaydet(veri):
 
 def fiyat_metnini_temizle(metin):
     """
-    ID'lerin, uzun kodların veya yapışık metinlerin fiyata karışmasını engeller.
-    Gerçekçi bir Türkiye e-ticaret fiyatı (10 TL ile 500.000 TL arası) dışındakileri eler.
+    N11 metinlerinden doğrudan TL fiyatını çıkarır.
+    Örn: '1.499,00 TL' -> 1499.00
     """
     if not metin:
         return 0.0
     
-    # Sadece sayı, virgül ve nokta bırak
-    rakam_temiz = re.sub(r'[^0-9,\.]', '', metin.strip())
-    if not rakam_temiz:
+    # Metin içinden sadece geçerli fiyat kalıbını (Örn: 1.250,50 veya 499,00 veya 1200) yakala
+    # TL veya ₺ öncesindeki rakam bloğunu çekmek en güvenlisidir
+    match = re.search(r'([\d\.,]+)\s*(?:TL|₺)?', metin)
+    if not match:
         return 0.0
 
+    raw_val = match.group(1).strip()
+    
     try:
-        # Eğer string çok uzunsa (örneğin ID ile birleşmişse örn: 180001700), bu bir fiyattan öte koddur.
-        if len(rakam_temiz) > 10:
-            return 0.0
-
-        if "," in rakam_temiz:
-            rakam_temiz = rakam_temiz.replace(".", "").replace(",", ".")
+        # Türkiye formatını (1.250,50) Python float formatına (1250.50) çevir
+        if "," in raw_val:
+            raw_val = raw_val.replace(".", "").replace(",", ".")
         else:
-            if rakam_temiz.count(".") > 1:
-                rakam_temiz = rakam_temiz.replace(".", "")
+            if raw_val.count(".") > 1:
+                raw_val = raw_val.replace(".", "")
 
-        val = float(rakam_temiz)
+        val = float(raw_val)
         
-        # Gerçekçi e-ticaret fiyat sınırları: 10 TL ile 300.000 TL arası
-        if 10.0 <= val <= 300000.0:
+        # Gerçekçi e-ticaret fiyat sınırları: 15 TL ile 250.000 TL arası
+        if 15.0 <= val <= 250000.0:
             return val
             
         return 0.0
@@ -79,7 +79,7 @@ def fiyat_metnini_temizle(metin):
         return 0.0
 
 def main():
-    print("Hassas ve Hatasız Fiyat Taraması Başlatılıyor...")
+    print("Esnek ve Kesin Fiyat Taraması Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -104,10 +104,11 @@ def main():
                     break
 
                 soup = BeautifulSoup(response.text, "html.parser")
-                urun_kartlari = soup.find_all(["li", "div", "article"], class_=re.compile(r'(column|defItem|product)', re.I))
                 
+                # N11 ürün kartları (li veya div)
+                urun_kartlari = soup.find_all("li", class_="column")
                 if not urun_kartlari:
-                    urun_kartlari = soup.find_all("li")
+                    urun_kartlari = soup.find_all(["li", "div"], class_=re.compile(r'(column|pro|product)', re.I))
 
                 sayfa_urun_sayisi = 0
                 for kart in urun_kartlari:
@@ -126,8 +127,12 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # N11'de indirimli/güncel fiyatın tutulduğu en net etiketler
-                    fiyat_tag = kart.find("ins", class_="newPrice") or kart.find("div", class_="priceContainer") or kart.find("span", class_="price")
+                    # Fiyat kapsayıcısını bul
+                    fiyat_tag = (
+                        kart.find("ins") or 
+                        kart.find("div", class_=re.compile(r'(price|fiyat)', re.I)) or 
+                        kart.find("span", class_=re.compile(r'(price|fiyat|newPrice)', re.I))
+                    )
                     
                     if not fiyat_tag:
                         continue
@@ -155,7 +160,7 @@ def main():
 
                     guncel_veriler[str(urun_id)] = fiyat
 
-                print(f" -> Sayfa {sayfa} tarandı. Temiz ürün: {sayfa_urun_sayisi} (Toplam: {toplam_urun})")
+                print(f" -> Sayfa {sayfa} tarandı. Eklenen ürün: {sayfa_urun_sayisi} (Toplam: {toplam_urun})")
                 
                 if sayfa_urun_sayisi == 0:
                     break
@@ -166,10 +171,10 @@ def main():
                 print(f"Sayfa {sayfa} hatası: {e}")
                 break
 
-        print(f"==> {magaza_adi} Tamamlandı - Toplam temiz ürün: {toplam_urun}")
+        print(f"==> {magaza_adi} Tamamlandı - Toplam ürün: {toplam_urun}")
 
     yeni_fiyatlari_kaydet(guncel_veriler)
-    print("\nTüm tarama başarıyla tamamlandı ve fiyatlar arındırıldı.")
+    print("\nTüm tarama tamamlandı!")
 
 if __name__ == "__main__":
     main()
