@@ -43,7 +43,7 @@ def yeni_fiyatlari_kaydet(veri):
         pass
 
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Hassas Fiyat Filtreli)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Ürün Bazlı İzole Mod)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -92,9 +92,12 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    kutu = a.find_parent(["li", "div", "article"])
+                    # KESİN ÇÖZÜM: Her ürün için sadece kendi tekil li (veya ürün kartı) kapsayıcısını al
+                    kutu = a.find_parent("li")
                     if not kutu:
-                        kutu = a
+                        kutu = a.find_parent("div", class_=lambda x: x and any(c in str(x).lower() for c in ["column", "product", "item", "pro", "box"]))
+                    if not kutu:
+                        continue
 
                     # Ürün adı
                     urun_adi = "Ürün"
@@ -104,17 +107,13 @@ def main():
                     elif a.text.strip():
                         urun_adi = a.text.strip()
 
-                    # --- KESİN VE HASSAS FİYAT AYIKLAMA ---
+                    # FİYAT AYIKLAMA (Sadece bu ürünün kartına ait alan)
                     fiyat = 0.0
-                    
-                    # 1. Öncelik: Doğrudan N11'in fiyat alanlarındaki metinleri yakala
                     fiyat_elem = kutu.find(["ins", "div", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "discount", "amount"]))
                     
                     if fiyat_elem:
                         fiyat_metni = fiyat_elem.text.strip()
-                        # Örn: "5.499,00 TL" -> Sadece sayısal formata dönüştür
                         temiz_metin = fiyat_metni.replace("TL", "").replace("TL.", "").strip()
-                        # Binlik ayracı olan noktaları kaldır, virgülü noktaya çevir
                         if "." in temiz_metin and "," in temiz_metin:
                             temiz_metin = temiz_metin.replace(".", "").replace(",", ".")
                         elif "," in temiz_metin:
@@ -125,10 +124,8 @@ def main():
                         except:
                             pass
 
-                    # 2. Öncelik: Etiket bulunamadıysa kutu içindeki standart "XX.XXX,XX TL" kalıbını regex ile ara
                     if fiyat <= 0 or fiyat > 300000:
                         kutu_metni = kutu.get_text()
-                        # Sadece Türkçe para birimi formatına uyan (örn: 5.499,00 TL veya 499,00 TL) kısımları al
                         bulunanlar = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*TL', kutu_metni)
                         if bulunanlar:
                             ham_fiyat = bulunanlar[0].replace(".", "").replace(",", ".")
@@ -137,7 +134,6 @@ def main():
                             except:
                                 pass
 
-                    # KESİN FİLTRE: 15 TL'den ucuz veya 300.000 TL'den pahalı ürün olamaz (Hatalı verileri çöpe atar)
                     if fiyat < 15 or fiyat > 300000:
                         continue
 
