@@ -8,7 +8,7 @@ CHAT_ID = os.environ.get("CHAT_ID")
 DATA_FILE = "fiyatlar.json"
 
 MAGAZALAR = {
-    "Teknosa": "https://www.n11.com/magaza/teknosa",
+    "Teknosa": "https://www.n11.com/arama?q=teknosa",
     "N11": "https://www.n11.com/magaza/n11",
     "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
     "Braunshop": "https://www.n11.com/magaza/braunshop",
@@ -59,8 +59,8 @@ def main():
         toplam_urun = 0
         gorulen_urunler = set()
 
-        while sayfa <= 15:  # Mağaza başına maksimum 15 sayfa güvenli sınır
-            url = f"{base_url}?pg={sayfa}"
+        while sayfa <= 10:  # En fazla 10 sayfa tara
+            url = f"{base_url}&pg={sayfa}" if "?" in base_url else f"{base_url}?pg={sayfa}"
             
             try:
                 response = requests.get(url, headers=HEADERS, timeout=20)
@@ -69,8 +69,11 @@ def main():
 
                 soup = BeautifulSoup(response.text, "html.parser")
                 
-                # Eski çalışan esnek ürün kutusu seçicisi
-                urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
+                # N11 arama ve liste sayfalarındaki standart ürün kartları
+                urun_kartlari = soup.select("div.column, li.column, div.pro")
+                if not urun_kartlari:
+                    # Alternatif esnek arama
+                    urun_kartlari = soup.find_all("div", class_=lambda x: x and "product" in x.lower())
                 
                 if not urun_kartlari:
                     break
@@ -82,23 +85,22 @@ def main():
                         continue
                     
                     urun_link = link_elem["href"]
-                    if urun_link.startswith("/"):
+                    if not urun_link.startswith("http"):
                         urun_link = "https://www.n11.com" + urun_link
 
                     urun_id = urun_link.split("?")[0]
-                    
-                    # Eğer bu sayfadaki ürünleri daha önce gördüysek, N11 son sayfadan sonra
-                    # başa dönüyor demektir, döngüyü kıralım.
                     if urun_id in gorulen_urunler:
                         continue
                     
                     gorulen_urunler.add(urun_id)
                     sayfa_yeni_urun += 1
 
-                    baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name", "desc"]))
+                    # Başlık bulma
+                    baslik_elem = kart.find(["h3", "h4", "span"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name"]))
                     urun_adi = baslik_elem.text.strip() if baslik_elem else "Ürün"
 
-                    fiyat_elem = kart.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount"]))
+                    # Fiyat bulma
+                    fiyat_elem = kart.find(["ins", "span", "div"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount"]))
                     if not fiyat_elem:
                         fiyat_elem = kart.find(string=lambda t: t and "TL" in t)
 
@@ -111,13 +113,16 @@ def main():
                         except ValueError:
                             continue
 
+                        if fiyat <= 0:
+                            continue
+
                         eski_fiyat = eski_veriler.get(urun_id)
 
                         if eski_fiyat is not None:
                             if fiyat < eski_fiyat:
                                 mesaj = (
                                     f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
-                                    f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
+                                    f"🏪 <b>Mağaza/Arama:</b> {magaza_adi}\n"
                                     f"📦 <b>Ürün:</b> {urun_adi}\n"
                                     f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
                                     f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
@@ -128,7 +133,6 @@ def main():
                         guncel_veriler[str(urun_id)] = fiyat
                         toplam_urun += 1
 
-                # Eğer bu sayfada hiç yeni ürün yakalayamadıysak sayfa bitti demektir
                 if sayfa_yeni_urun == 0:
                     break
 
