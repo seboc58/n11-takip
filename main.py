@@ -47,7 +47,12 @@ def yeni_fiyatlari_kaydet(veri):
 def fiyat_temizle(metin):
     if not metin:
         return 0.0
-    if re.search(r'\d+\s*(w|watt|ml|lt|gb|mah|cm|parça)\b', metin.lower()):
+    
+    # Teknik birim, taksit, vade veya indirim yüzdesi içeren aldatıcı metinleri ele
+    metin_lower = metin.lower()
+    if any(kriter in metin_lower for kriter in ['taksit', 'ay', '%', 'indirim', 'kargo', 'puan']):
+        return 0.0
+    if re.search(r'\d+\s*(w|watt|ml|lt|gb|mah|cm|parça|ay)\b', metin_lower):
         return 0.0
 
     m = re.search(r'([\d\.\,]+)', metin.replace("TL", "").replace("TL.", "").strip())
@@ -67,12 +72,13 @@ def fiyat_temizle(metin):
 
     try:
         f = float(val)
+        # Mantıklı ürün fiyat aralığı (15 TL ile 300.000 TL arası)
         return f if 15.0 <= f <= 300000.0 else 0.0
     except:
         return 0.0
 
 def main():
-    print("Kararlı Tarama Modu Başlatılıyor...")
+    print("Doğru Fiyat Odaklı Tarama Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -92,7 +98,6 @@ def main():
                 page.goto(base_url, timeout=60000, wait_until="domcontentloaded")
                 time.sleep(3)
 
-                # Sayfanın en altına kademeli inip tüm ürünlerin yüklenmesini tetikleyelim
                 for _ in range(3):
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
                     time.sleep(1.5)
@@ -100,7 +105,6 @@ def main():
                 html_content = page.content()
                 soup = BeautifulSoup(html_content, "html.parser")
                 
-                # N11 ürün kartları genel seçicisi
                 kartlar = soup.select("li.column, div.column, div.pro, div.productItem, li.pro")
                 toplam_urun = 0
 
@@ -120,7 +124,8 @@ def main():
                     baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name"]))
                     urun_adi = baslik_elem.text.strip() if baslik_elem else "Ürün"
 
-                    fiyat_etiketleri = kart.select("ins, span.newPrice, div.price, span.price")
+                    # Sadece güncel ve net fiyat alanlarını hedefle (eski/üstü çizili fiyatları ve taksitleri ele)
+                    fiyat_etiketleri = kart.select("ins, span.newPrice, div.priceContainer ins, span.price")
                     fiyatlar = []
                     
                     for etiket in fiyat_etiketleri:
@@ -128,6 +133,7 @@ def main():
                         if f > 0:
                             fiyatlar.append(f)
 
+                    # Eğer net etiket bulunamadıysa kartın tamamına bak ama sıkı filtre uygula
                     if not fiyatlar:
                         f = fiyat_temizle(kart.get_text())
                         if f > 0:
@@ -165,7 +171,7 @@ def main():
         browser.close()
 
     yeni_fiyatlari_kaydet(guncel_veriler)
-    print("\nTüm tarama tamamlandı ve fiyatlar kaydedildi.")
+    print("\nTüm tarama tamamlandı ve doğru fiyatlar kaydedildi.")
 
 if __name__ == "__main__":
     main()
