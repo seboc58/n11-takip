@@ -18,7 +18,6 @@ MAGAZALAR = {
     "Tefal": "https://www.n11.com/magaza/tefal",
 }
 
-# Cloudflare engelini aşmak için gelişmiş tarayıcı simülasyonu
 scraper = cloudscraper.create_scraper(
     browser={
         'browser': 'chrome',
@@ -32,15 +31,7 @@ scraper.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
     "Referer": "https://www.n11.com/",
-    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-User": "?1",
     "Upgrade-Insecure-Requests": "1"
 })
 
@@ -78,10 +69,10 @@ def main():
         toplam_urun = 0
         gorulen_urunler = set()
 
-        while sayfa <= 15:  
+        while sayfa <= 10:  
             url = f"{base_url}?pg={sayfa}"
             try:
-                time.sleep(1.5)  # Cloudflare tetiklememek için küçük gecikme
+                time.sleep(2)  
                 response = scraper.get(url, timeout=20)
                 print(f"{magaza_adi} Sayfa {sayfa} - HTTP Durum Kodu: {response.status_code}")
                 
@@ -91,80 +82,82 @@ def main():
 
                 soup = BeautifulSoup(response.text, "html.parser")
                 
-                # Doğrudan ürün kartı elementlerini ve li/div yapılarını yakala
-                urun_kartlari = soup.select("li.column, div.column, div.pro, div.productItem, div.group")
-                if not urun_kartlari:
-                    urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item", "pro", "cell"]))
-
-                if not urun_kartlari:
-                    # Alternatif: Sayfadaki tüm ürün linklerinin kapsayıcılarını al
-                    for a in soup.find_all("a", href=True):
-                        if "/urun/" in a["href"]:
-                            p = a.find_parent(["div", "li", "article"])
-                            if p and p not in urun_kartlari:
-                                urun_kartlari.append(p)
-
-                if not urun_kartlari:
-                    break
-
+                # Doğrudan /urun/ içeren tüm linkleri bul
+                urun_linkleri = soup.find_all("a", href=True)
                 sayfa_yeni_urun = 0
-                for kart in urun_kartlari:
-                    link_elem = kart.find("a", href=True)
-                    if not link_elem:
+
+                for a in urun_linkleri:
+                    href = a["href"]
+                    if "/urun/" not in href:
                         continue
-                    
-                    urun_link = link_elem["href"]
+
+                    urun_link = href
                     if urun_link.startswith("/"):
                         urun_link = "https://www.n11.com" + urun_link
 
-                    if "/urun/" not in urun_link:
-                        continue
-
                     urun_id = urun_link.split("?")[0]
-                    
                     if urun_id in gorulen_urunler:
                         continue
+
+                    # Bu linkin ait olduğu ürün kutusunu (li, div veya article) bulmaya çalış
+                    kutu = a.find_parent(["li", "div", "article"])
+                    if not kutu:
+                        kutu = a
+
+                    # Ürün adını bul
+                    urun_adi = "Ürün"
+                    title_elem = kutu.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
+                    if title_elem:
+                        urun_adi = title_elem.text.strip()
+                    elif a.text.strip():
+                        urun_adi = a.text.strip()
+
+                    # Fiyatı bul (Kutu içindeki tüm metinlerde TL arayarak veya fiyat etiketlerinden)
+                    fiyat = 0.0
+                    fiyat_elem = kutu.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "new", "amount", "discount"]))
                     
+                    if fiyat_elem:
+                        fiyat_metni = fiyat_elem.text.replace(".", "").replace(",", ".").replace("TL", "").strip()
+                        try:
+                            fiyat = float(''.join(c for c in fiyat_metni if c.isdigit() or c == '.'))
+                        except:
+                            pass
+                    
+                    # Eğer etiketle bulunamadıysa kutunun tüm metninde TL ara
+                    if fiyat <= 0:
+                        import re
+                        kutu_metni = kutu.get_text()
+                        fiyat_bulunanlar = re.findall(r'([\d\.]+,\d{2})\s*TL', kutu_metni)
+                        if fiyat_bulunanlar:
+                            temiz_fiyat = fiyat_bulunanlar[0].replace(".", "").replace(",", ".")
+                            try:
+                                fiyat = float(temiz_fiyat)
+                            except:
+                                pass
+
+                    if fiyat <= 0:
+                        continue
+
                     gorulen_urunler.add(urun_id)
                     sayfa_yeni_urun += 1
+                    toplam_urun += 1
 
-                    baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name", "desc"]))
-                    if not baslik_elem:
-                        baslik_elem = kart.find("h3") or kart.find("h4") or kart.find("a")
-                    urun_adi = baslik_elem.text.strip() if baslik_elem else "Ürün"
+                    eski_fiyat = eski_veriler.get(urun_id)
+                    if eski_fiyat is notoges and eski_fiyat is not None: # typo safety
+                        pass
 
-                    fiyat_elem = kart.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount", "discount"]))
-                    if not fiyat_elem:
-                        fiyat_elem = kart.find(string=lambda t: t and "TL" in t)
+                    if eski_fiyat is not None and fiyat < eski_fiyat:
+                        mesaj = (
+                            f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
+                            f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
+                            f"📦 <b>Ürün:</b> {urun_adi[:60]}...\n"
+                            f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
+                            f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
+                            f"🔗 <a href='{urun_link}'>Ürüne Git</a>"
+                        )
+                        telegram_mesaj_gonder(mesaj)
 
-                    if fiyat_elem:
-                        fiyat_metni = fiyat_elem.text if hasattr(fiyat_elem, 'text') else str(fiyat_elem)
-                        fiyat_str = fiyat_metni.replace(".", "").replace(",", ".").replace("TL", "").strip()
-                        
-                        try:
-                            fiyat = float(''.join(c for c in fiyat_str if c.isdigit() or c == '.'))
-                        except ValueError:
-                            continue
-
-                        if fiyat <= 0:
-                            continue
-
-                        eski_fiyat = eski_veriler.get(urun_id)
-
-                        if eski_fiyat is not None:
-                            if fiyat < eski_fiyat:
-                                mesaj = (
-                                    f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
-                                    f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
-                                    f"📦 <b>Ürün:</b> {urun_adi}\n"
-                                    f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
-                                    f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
-                                    f"🔗 <a href='{urun_link}'>Ürüne Git</a>"
-                                )
-                                telegram_mesaj_gonder(mesaj)
-                        
-                        guncel_veriler[str(urun_id)] = fiyat
-                        toplam_urun += 1
+                    guncel_veriler[str(urun_id)] = fiyat
 
                 if sayfa_yeni_urun == 0:
                     break
