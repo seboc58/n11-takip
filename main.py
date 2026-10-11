@@ -46,38 +46,47 @@ def yeni_fiyatlari_kaydet(veri):
 
 def fiyat_metnini_temizle(metin):
     """
-    Sadece gerçek fiyat metninden (örn: "1.249,90 TL" veya "850 TL") sayı türetir.
+    Sadece gerçek fiyat niteliği taşıyan metinleri güvenli bir şekilde ayıklar.
+    Model numarası, kablo boyu (1.5m) veya watt (20W) değerlerini kesinlikle eler.
     """
     if not metin:
         return 0.0
     
-    # Sadece rakam, nokta ve virgülü bırak
-    metin_clean = re.sub(r'[^0-9,\.]', '', metin)
-    if not metin_clean:
-        return 0.0
+    # Metin içinde TL ibaresi veya yaygın para birimi kalıbı geçmiyorsa ve çok kısaysa şüphelen
+    metin_clean = metin.strip()
     
-    try:
-        # Türkiye formatını (1.250,50) standart float formatına (1250.50) çevir
-        if "," in metin_clean:
-            metin_clean = metin_clean.replace(".", "").replace(",", ".")
-        else:
-            # Virgül yoksa ve birden fazla nokta varsa binlik ayracıdır (1.250.000 -> 1250000)
-            if metin_clean.count(".") > 1:
-                metin_clean = metin_clean.replace(".", "")
+    # Sadece rakam, virgül, nokta bırak
+    rakam_temiz = re.sub(r'[^0-9,\.]', '', metin_clean)
+    if not rakam_temiz:
+        return 0.0
 
-        val = float(metin_clean)
-        return val if val > 0 else 0.0
+    try:
+        # Türkiye formatı (Örn: 1.250,50 veya 150,00)
+        if "," in rakam_temiz:
+            rakam_temiz = rakam_temiz.replace(".", "").replace(",", ".")
+        else:
+            if rakam_temiz.count(".") > 1:
+                rakam_temiz = rakam_temiz.replace(".", "")
+
+        val = float(rakam_temiz)
+        
+        # Mantıksız derecede küçük (örn: 17 TL, 20 TL gibi kablo boyu karışması muhtemel) 
+        # veya yanlışlıkla yakalanmış tek basamaklı/küçük sayıları filtrele (1 TL'den küçük zaten olamaz)
+        if val < 5.0:
+            return 0.0
+            
+        return val
     except:
         return 0.0
 
 def main():
-    print("Doğru Fiyat Ayıklamalı Tarama Başlatılıyor...")
+    print("Akıllı Fiyat Filtreli Çoklu Mağaza Taraması Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
     headers = {
         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en-US;q=0.7",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Referer": "https://www.n11.com/"
     }
@@ -96,8 +105,6 @@ def main():
                     break
 
                 soup = BeautifulSoup(response.text, "html.parser")
-                
-                # N11 kart yapılarını bul (li.column veya div/article kaplamaları)
                 urun_kartlari = soup.find_all(["li", "div", "article"])
                 
                 sayfa_urun_sayisi = 0
@@ -117,9 +124,8 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # N11'de fiyatın doğrudan yazıldığı spesifik sınıfları ara
+                    # N11'in yeni fiyat etiketlerini hedefle
                     fiyat_tag = kart.find(["ins", "span", "div"], class_=re.compile(r'(newPrice|price|ins|priceContainer)', re.I))
-                    
                     if not fiyat_tag:
                         continue
 
@@ -160,7 +166,7 @@ def main():
         print(f"==> {magaza_adi} Tamamlandı - Toplam taranan benzersiz ürün: {toplam_urun}")
 
     yeni_fiyatlari_kaydet(guncel_veriler)
-    print("\nTüm tarama tamamlandı, gerçek fiyatlar kaydedildi.")
+    print("\nTüm arama taramaları tamamlandı, temiz fiyatlar kaydedildi.")
 
 if __name__ == "__main__":
     main()
