@@ -71,13 +71,13 @@ def fiyat_metnini_temizle(metin):
         return 0.0
 
 def main():
-    print("Akıllı Minimum Fiyat (Sepet İndirimi Odaklı) Taraması Başlatılıyor...")
+    print("Taksit ve Yanıltıcı Rakamlardan Arındırılmış Tarama Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en-US;q=0.7",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Referer": "https://www.n11.com/"
     }
@@ -117,11 +117,16 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # Ürün kartındaki TÜM olası fiyat etiketlerini bul
                     fiyat_tagleri = kart.find_all(["ins", "span", "div"], class_=re.compile(r'(price|fiyat|newPrice|basket|discount)', re.I))
                     
                     bulunan_fiyatlar = []
                     for ft in fiyat_tagleri:
+                        metin_icerik = ft.get_text().lower()
+                        
+                        # 🚨 TAKSİT, AY VEYA BAŞLAYAN İFADELERİNİ KESİNLİKLE ELE!
+                        if any(kelime in metin_icerik for kelime in ['taksit', 'ay', 'başlayan', 'seçeneği']):
+                            continue
+
                         f = fiyat_metnini_temizle(ft.get_text())
                         if f > 0:
                             bulunan_fiyatlar.append(f)
@@ -129,7 +134,6 @@ def main():
                     if not bulunan_fiyatlar:
                         continue
 
-                    # Kartta bulunan fiyatlar içindeki EN DÜŞÜK olanı seç (Sepet/İndirim fiyatı)
                     fiyat = min(bulunan_fiyatlar)
 
                     if fiyat <= 0:
@@ -140,7 +144,15 @@ def main():
                     sayfa_urun_sayisi += 1
 
                     eski_fiyat = eski_veriler.get(urun_id)
+                    
+                    # Ani ve anormal %50'den fazla düşüşleri (taksit veya hatalı okuma ihtimaline karşı) korumaya al
                     if eski_fiyat is not None and fiyat < eski_fiyat:
+                        # Eğer fiyat eski fiyatın yarısından daha düşükse (örn: 4500 TL'den 299 TL'ye düşüş gibi) bu gerçek olamayacak kadar tuhaftır
+                        if fiyat < (eski_fiyat * 0.4):
+                            print(f" -> Anormal düşüş engellendi ({eski_fiyat} -> {fiyat}): Muhtemelen hatalı okuma.")
+                            guncel_veriler[str(urun_id)] = eski_fiyat  # Eski fiyatı koru
+                            continue
+
                         mesaj = (
                             f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
                             f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
