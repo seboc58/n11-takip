@@ -20,7 +20,8 @@ jobs:
       - name: Kütüphaneleri Yükle
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 cloudscraper
+          pip install playwright beautifulsoup4
+          playwright install chromium
 
       - name: Botu Çalıştır
         env:
