@@ -42,11 +42,11 @@ def yeni_fiyatlari_kaydet(veri):
     except:
         pass
 
-def fiyat_donustur(metin):
+def fiyat_temizle(metin):
     if not metin:
         return 0.0
     
-    # Teknik birimler varsa ele
+    # Watt veya teknik ölçü birimi içeren metinleri ele
     if re.search(r'\d+\s*(w|watt|ml|lt|gb|mah|cm|parça)\b', metin.lower()):
         return 0.0
 
@@ -71,29 +71,8 @@ def fiyat_donustur(metin):
     except:
         return 0.0
 
-def izole_urun_fiyati_bul(kutu):
-    """
-    Sadece ve sadece o ürün kartının (kutu) YEREL İÇERİĞİNDEKİ fiyat etiketlerini tarar.
-    Asla sayfa genelinde yukarı çıkmaz.
-    """
-    # Kartın içindeki fiyat belirten etiketler
-    fiyat_elementleri = kutu.find_all(["ins", "span", "div", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "amount", "discount"]))
-    
-    fiyatlar = []
-    for elem in fiyat_elementleri:
-        # Güvenlik kontrolü: Bu element gerçekten bu kutunun içinde mi?
-        if elem.find_parent("li") == kutu or elem.find_parent("div", class_=lambda x: x and "product" in str(x).lower()) == kutu:
-            f = fiyat_donustur(elem.text)
-            if f > 0:
-                fiyatlar.append(f)
-                
-    if fiyatlar:
-        return min(fiyatlar) # Sepet indirimi varsa en düşük olanı al
-        
-    return 0.0
-
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Tam İzole Ürün Modu)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Kararlı Doğrudan Eşleşme Modu)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -125,15 +104,19 @@ def main():
                 html_content = page.content()
                 soup = BeautifulSoup(html_content, "html.parser")
                 
-                urun_linkleri = soup.find_all("a", href=True)
+                # N11 ürün kartlarını doğrudan seç
+                kartlar = soup.select("li.column, div.column, div.pro, div.productItem")
+                if not kartlar:
+                    kartlar = soup.find_all(["li", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["column", "pro", "product"]))
+
                 toplam_urun = 0
 
-                for a in urun_linkleri:
-                    href = a["href"]
-                    if "/urun/" not in href:
+                for kart in kartlar:
+                    link_elem = kart.find("a", href=True)
+                    if not link_elem or "/urun/" not in link_elem["href"]:
                         continue
 
-                    urun_link = href
+                    urun_link = link_elem["href"]
                     if urun_link.startswith("/"):
                         urun_link = "https://www.n11.com" + urun_link
 
@@ -141,19 +124,32 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # Ürünün en güvenli üst kapsayıcısını (kartını) bul
-                    kutu = a.find_parent("li")
-                    if not kutu:
-                        kutu = a.find_parent("div", class_=lambda x: x and any(c in str(x).lower() for c in ["column", "pro", "product", "item", "box"]))
-                    if not kutu:
+                    # Ürün adı
+                    baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
+                    urun_adi = baslik_elem.text.strip() if baslik_elem else (link_elem.text.strip() or "Ürün")
+
+                    # Sadece bu kartın içindeki fiyat etiketlerini bul
+                    fiyat_etiketleri = kart.select("ins, span.newPrice, div.price, span.price, p.price")
+                    fiyatlar = []
+                    
+                    for etiket in fiyat_etiketleri:
+                        f = fiyat_temizle(etiket.text)
+                        if f > 0:
+                            fiyatlar.append(f)
+
+                    if not fiyatlar:
+                        # Eğer özel etiket bulunamazsa kartın kendi metninden güvenli arama yap
+                        f = fiyat_temizle(kart.get_text())
+                        if f > 0:
+                            fiyatlar.append(f)
+
+                    if not fiyatlar:
                         continue
 
-                    baslik_elem = kutu.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
-                    urun_adi = baslik_elem.text.strip() if baslik_elem else (a.text.strip() or "Ürün")
-
-                    fiyat = izole_urun_fiyati_bul(kutu)
+                    # Sepet indirimi veya alternatif etiketler varsa en düşük mantıklı fiyatı seç
+                    fiyat = min(fiyatlar)
                     if fiyat <= 0:
-                        continue  # Fiyatı kesin olarak doğrulanamayan ürünü kaydetme
+                        continue
 
                     gorulen_urunler.add(urun_id)
                     toplam_urun += 1
