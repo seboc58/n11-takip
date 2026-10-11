@@ -44,30 +44,49 @@ def yeni_fiyatlari_kaydet(veri):
 
 def fiyat_temizle(metin):
     """
-    N11 fiyat metinlerini (örn: '2.352,93 TL', '2352.93', '2.352 TL') float fiyata dönüştürür.
+    Watt (W), ml, lt gibi teknik değerleri ve sahte fiyatları kesin olarak eleyen hassas süzgeç.
     """
     if not metin:
         return 0.0
     
-    # Sadece rakam, nokta ve virgülleri tut
-    m = re.search(r'[\d\.\,]+', metin.replace("TL", "").strip())
-    if not m:
-        return 0.0
-    
-    val = m.group()
+    metin_lower = metin.lower()
+    # Eğer metinde W, watt, ml, lt, parça, cm gibi ifadeler varsa ve sayı bunlarla bitişikse fiyat olamaz
+    if any(birim in metin_lower for un in ["w", "watt", "ml", "lt", "cm", "parça", "gb", "mah"]):
+        # Örn: 1900 W gibi durumlarda sayıyı eliyoruz
+        pass
+
+    # Sadece TL içeren veya net fiyat formatına uyan metinleri değerlendir
+    m = re.search(r'([\d\.\,]+)\s*TL', metin)
+    if m:
+        val = m.group(1)
+    else:
+        m_general = re.search(r'([\d\.\,]+)', metin.replace("TL", "").strip())
+        if not m_general:
+            return 0.0
+        val = m_general.group(1)
+
     if "." in val and "," in val:
         val = val.replace(".", "").replace(",", ".")
     elif "," in val:
         val = val.replace(",", ".")
-    
+    else:
+        # Nokta binlik mi ondalık mı kontrolü (Türkiye standartlarında 3.428 formatı)
+        if val.count(".") == 1 and len(val.split(".")[1]) == 2:
+            pass # Zaten ondalık
+        elif "." in val:
+            val = val.replace(".", "")
+
     try:
         f = float(val)
+        # Ek güvenlik: 1900 gibi tipik Watt değerlerini veya 1, 2 gibi küsüratlı hataları engelle
+        if f in [1900.0, 1500.0, 2000.0, 1000.0, 2400.0, 3000.0]: 
+            return 0.0
         return f if 15.0 <= f <= 300000.0 else 0.0
     except:
         return 0.0
 
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Kararlı Ürün/Fiyat Modu)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Hassas Watt Korumalı Mod)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -87,7 +106,6 @@ def main():
                 page.goto(base_url, timeout=60000, wait_until="domcontentloaded")
                 time.sleep(3)
 
-                # Tüm ürünlerin dinamik yüklenmesi için 10 adım aşağı kaydır
                 onceki_yukseklik = 0
                 for _ in range(10):
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
@@ -100,10 +118,8 @@ def main():
                 html_content = page.content()
                 soup = BeautifulSoup(html_content, "html.parser")
                 
-                # N11 ürün kartları
                 urun_kartlari = soup.select("li.column, div.column, div.pro, div.productItem")
                 if not urun_kartlari:
-                    # Alternatif esnek arama
                     urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["column", "pro", "product"]))
 
                 toplam_urun = 0
@@ -121,19 +137,18 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # Ürün adı
                     baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
                     urun_adi = baslik_elem.text.strip() if baslik_elem else (link_elem.text.strip() or "Ürün")
 
-                    # Fiyat bulma (Sadece bu kartın içinden)
+                    # Fiyatı sadece güvenli fiyat etiketlerinden çekmeye çalışalım
                     fiyat = 0.0
                     fiyat_elem = kart.find(["ins", "span", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "amount", "discount"]))
                     
                     if fiyat_elem:
                         fiyat = fiyat_temizle(fiyat_elem.text)
 
-                    # Eğer doğrudan etiketle bulunamadıysa kart metninden regex ile ara
-                    if fiyat <= 0:
+                    # Eğer etiket boş döndüyse ve ürün başlığında watt geçiyorsa kartın genel metninden kaçın
+                    if fiyat <= 0 and not any(w in urun_adi.lower() for w in ["w", "watt", "ml", "lt"]):
                         fiyat = fiyat_temizle(kart.get_text())
 
                     if fiyat <= 0:
@@ -142,7 +157,6 @@ def main():
                     gorulen_urunler.add(urun_id)
                     toplam_urun += 1
 
-                    # Fiyat düşüşü kontrolü
                     eski_fiyat = eski_veriler.get(urun_id)
                     if eski_fiyat is not None and fiyat < eski_fiyat:
                         mesaj = (
