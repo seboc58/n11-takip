@@ -44,31 +44,34 @@ def yeni_fiyatlari_kaydet(veri):
     except:
         pass
 
-def fiyat_temizle(metin):
+def fiyat_metnini_temizle(metin):
+    """
+    Sadece gerçek fiyat metninden (örn: "1.249,90 TL" veya "850 TL") sayı türetir.
+    """
     if not metin:
         return 0.0
-    metin_temiz = metin.replace("TL", "").replace("TL.", "").strip()
-    m = re.findall(r'([\d\.]+[\d\,]+)', metin_temiz)
-    if not m:
-        m = re.findall(r'(\d+)', metin_temiz)
-        if not m:
-            return 0.0
+    
+    # Sadece rakam, nokta ve virgülü bırak
+    metin_clean = re.sub(r'[^0-9,\.]', '', metin)
+    if not metin_clean:
+        return 0.0
+    
+    try:
+        # Türkiye formatını (1.250,50) standart float formatına (1250.50) çevir
+        if "," in metin_clean:
+            metin_clean = metin_clean.replace(".", "").replace(",", ".")
+        else:
+            # Virgül yoksa ve birden fazla nokta varsa binlik ayracıdır (1.250.000 -> 1250000)
+            if metin_clean.count(".") > 1:
+                metin_clean = metin_clean.replace(".", "")
 
-    for val_str in m:
-        try:
-            clean_val = val_str.replace(".", "").replace(",", ".")
-            if "." in clean_val and clean_val.count(".") > 1:
-                clean_val = clean_val.replace(".", "", clean_val.count(".") - 1)
-            
-            f = float(clean_val)
-            if 15.0 <= f <= 300000.0:
-                return f
-        except:
-            continue
-    return 0.0
+        val = float(metin_clean)
+        return val if val > 0 else 0.0
+    except:
+        return 0.0
 
 def main():
-    print("Arama Tabanlı Çok Sayfalı Tarama Başlatılıyor...")
+    print("Doğru Fiyat Ayıklamalı Tarama Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -93,11 +96,17 @@ def main():
                     break
 
                 soup = BeautifulSoup(response.text, "html.parser")
-                linkler = soup.find_all("a", href=True)
+                
+                # N11 kart yapılarını bul (li.column veya div/article kaplamaları)
+                urun_kartlari = soup.find_all(["li", "div", "article"])
                 
                 sayfa_urun_sayisi = 0
-                for link in linkler:
-                    urun_link = link["href"]
+                for kart in urun_kartlari:
+                    link_tag = kart.find("a", href=True)
+                    if not link_tag:
+                        continue
+                        
+                    urun_link = link_tag["href"]
                     if "/urun/" not in urun_link:
                         continue
 
@@ -108,10 +117,15 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    parent = link.find_parent(["li", "div", "article"])
-                    kapsayici_metin = parent.get_text() if parent else link.get_text()
+                    # N11'de fiyatın doğrudan yazıldığı spesifik sınıfları ara
+                    fiyat_tag = kart.find(["ins", "span", "div"], class_=re.compile(r'(newPrice|price|ins|priceContainer)', re.I))
+                    
+                    if not fiyat_tag:
+                        continue
 
-                    fiyat = fiyat_temizle(kapsayici_metin)
+                    fiyat_metni = fiyat_tag.get_text().strip()
+                    fiyat = fiyat_metnini_temizle(fiyat_metni)
+
                     if fiyat <= 0:
                         continue
 
@@ -132,7 +146,7 @@ def main():
 
                     guncel_veriler[str(urun_id)] = fiyat
 
-                print(f" -> Sayfa {sayfa} tarandı. Yeni ürün: {sayfa_urun_sayisi} (Toplam: {toplam_urun})")
+                print(f" -> Sayfa {sayfa} tarandı. Eklenen ürün: {sayfa_urun_sayisi} (Toplam: {toplam_urun})")
                 
                 if sayfa_urun_sayisi == 0:
                     break
@@ -146,7 +160,7 @@ def main():
         print(f"==> {magaza_adi} Tamamlandı - Toplam taranan benzersiz ürün: {toplam_urun}")
 
     yeni_fiyatlari_kaydet(guncel_veriler)
-    print("\nTüm arama taramaları tamamlandı, fiyatlar kaydedildi.")
+    print("\nTüm tarama tamamlandı, gerçek fiyatlar kaydedildi.")
 
 if __name__ == "__main__":
     main()
