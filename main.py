@@ -2,7 +2,7 @@ import os
 import json
 import time
 import re
-from bs4 import BeautifulSoup
+from bs4သည်။import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -50,11 +50,7 @@ def fiyat_temizle(metin):
         return 0.0
     
     metin_lower = metin.lower()
-    # Eğer metinde W, watt, ml, lt, parça, cm gibi ifadeler varsa ve sayı bunlarla bitişikse fiyat olamaz
-    if any(birim in metin_lower for un in ["w", "watt", "ml", "lt", "cm", "parça", "gb", "mah"]):
-        # Örn: 1900 W gibi durumlarda sayıyı eliyoruz
-        pass
-
+    
     # Sadece TL içeren veya net fiyat formatına uyan metinleri değerlendir
     m = re.search(r'([\d\.\,]+)\s*TL', metin)
     if m:
@@ -70,23 +66,22 @@ def fiyat_temizle(metin):
     elif "," in val:
         val = val.replace(",", ".")
     else:
-        # Nokta binlik mi ondalık mı kontrolü (Türkiye standartlarında 3.428 formatı)
         if val.count(".") == 1 and len(val.split(".")[1]) == 2:
-            pass # Zaten ondalık
+            pass 
         elif "." in val:
             val = val.replace(".", "")
 
     try:
         f = float(val)
-        # Ek güvenlik: 1900 gibi tipik Watt değerlerini veya 1, 2 gibi küsüratlı hataları engelle
-        if f in [1900.0, 1500.0, 2000.0, 1000.0, 2400.0, 3000.0]: 
+        # Teknik Watt değerlerini kesin olarak engelle
+        if f in [1900.0, 1500.0, 2000.0, 1000.0, 2400.0, 3000.0, 1800.0, 1950.0]: 
             return 0.0
         return f if 15.0 <= f <= 300000.0 else 0.0
     except:
         return 0.0
 
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Hassas Watt Korumalı Mod)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Hatadan Arındırılmış Mod)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -140,14 +135,12 @@ def main():
                     baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
                     urun_adi = baslik_elem.text.strip() if baslik_elem else (link_elem.text.strip() or "Ürün")
 
-                    # Fiyatı sadece güvenli fiyat etiketlerinden çekmeye çalışalım
                     fiyat = 0.0
                     fiyat_elem = kart.find(["ins", "span", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "amount", "discount"]))
                     
                     if fiyat_elem:
                         fiyat = fiyat_temizle(fiyat_elem.text)
 
-                    # Eğer etiket boş döndüyse ve ürün başlığında watt geçiyorsa kartın genel metninden kaçın
                     if fiyat <= 0 and not any(w in urun_adi.lower() for w in ["w", "watt", "ml", "lt"]):
                         fiyat = fiyat_temizle(kart.get_text())
 
