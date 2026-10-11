@@ -9,7 +9,6 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 DATA_FILE = "fiyatlar.json"
 
-# Mağazaların doğrudan tüm ürünler listeleme linkleri
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/magaza/teknosa/tum-urunler",
     "Mediamarkt": "https://www.n11.com/magaza/mediamarkt/tum-urunler",
@@ -48,8 +47,6 @@ def yeni_fiyatlari_kaydet(veri):
 def fiyat_temizle(metin):
     if not metin:
         return 0.0
-    
-    # Watt veya teknik ölçü birimi içeren metinleri ele
     if re.search(r'\d+\s*(w|watt|ml|lt|gb|mah|cm|parça)\b', metin.lower()):
         return 0.0
 
@@ -75,7 +72,7 @@ def fiyat_temizle(metin):
         return 0.0
 
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Kademeli Yükleme & Derin Tarama Modu)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Genişletilmiş Seçici Modu)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -93,20 +90,20 @@ def main():
 
             try:
                 page.goto(base_url, timeout=60000, wait_until="domcontentloaded")
-                time.sleep(2)
+                time.sleep(3)
 
-                # Kademeli kaydırma: Yavaş yavaş aşağı inerek lazy-load görselleri/ürünleri tetikle
-                for step in range(1, 8):
-                    page.evaluate(f"window.scrollTo(0, document.body.scrollHeight * ({step} / 7));")
+                # Sayfayı daha derin kaydırarak tüm lazy-load ürünlerin yüklenmesini tetikle
+                for step in range(1, 12):
+                    page.evaluate(f"window.scrollTo(0, document.body.scrollHeight * ({step} / 12));")
                     time.sleep(1)
 
                 html_content = page.content()
                 soup = BeautifulSoup(html_content, "html.parser")
                 
-                # N11 ürün kartlarını kapsayan tüm olası sınıflar
-                kartlar = soup.select("li.column, div.column, div.pro, div.productItem, li.pro")
+                # N11'in güncel mağaza sayfa yapısındaki tüm olası ürün kapsayıcıları
+                kartlar = soup.select("li.column, div.column, div.pro, div.productItem, li.pro, div.listItem")
                 if not kartlar:
-                    kartlar = soup.find_all(["li", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["column", "pro", "product"]))
+                    kartlar = soup.find_all(["li", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["column", "pro", "product", "item"]))
 
                 toplam_urun = 0
 
@@ -123,12 +120,10 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # Ürün adı alma
                     baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
                     urun_adi = baslik_elem.text.strip() if baslik_elem else (link_elem.text.strip() or "Ürün")
 
-                    # Fiyat alma
-                    fiyat_etiketleri = kart.select("ins, span.newPrice, div.price, span.price, p.price")
+                    fiyat_etiketleri = kart.select("ins, span.newPrice, div.price, span.price, p.price, span.discountPrice")
                     fiyatlar = []
                     
                     for etiket in fiyat_etiketleri:
