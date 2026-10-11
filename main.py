@@ -9,17 +9,20 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 DATA_FILE = "fiyatlar.json"
 
+# Mağazaların doğrudan tüm ürünler listeleme linkleri
 MAGAZALAR = {
-    "Teknosa": "https://www.n11.com/magaza/teknosa",
-    "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
-    "Braunshop": "https://www.n11.com/magaza/braunshop",
-    "Korayspor": "https://www.n11.com/magaza/korayspor",
-    "Skechers": "https://www.n11.com/magaza/skechers",
-    "Karaca": "https://www.n11.com/magaza/karaca",
-    "Tefal": "https://www.n11.com/magaza/tefal",
+    "Teknosa": "https://www.n11.com/magaza/teknosa/tum-urunler",
+    "Mediamarkt": "https://www.n11.com/magaza/mediamarkt/tum-urunler",
+    "Braunshop": "https://www.n11.com/magaza/braunshop/tum-urunler",
+    "Korayspor": "https://www.n11.com/magaza/korayspor/tum-urunler",
+    "Skechers": "https://www.n11.com/magaza/skechers/tum-urunler",
+    "Karaca": "https://www.n11.com/magaza/karaca/tum-urunler",
+    "Tefal": "https://www.n11.com/magaza/tefal/tum-urunler",
 }
 
 def telegram_mesaj_gonder(mesaj, page_client):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return
     try:
         api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         page_client.request.post(api_url, data={"chat_id": CHAT_ID, "text": mesaj, "parse_mode": "HTML"})
@@ -72,7 +75,7 @@ def fiyat_temizle(metin):
         return 0.0
 
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Kararlı Doğrudan Eşleşme Modu)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Kademeli Yükleme & Derin Tarama Modu)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -90,22 +93,18 @@ def main():
 
             try:
                 page.goto(base_url, timeout=60000, wait_until="domcontentloaded")
-                time.sleep(3)
+                time.sleep(2)
 
-                onceki_yukseklik = 0
-                for _ in range(12):
-                    page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
-                    time.sleep(1.5)
-                    yeni_yukseklik = page.evaluate("document.body.scrollHeight")
-                    if yeni_yukseklik == onceki_yukseklik:
-                        break
-                    onceki_yukseklik = yeni_yukseklik
+                # Kademeli kaydırma: Yavaş yavaş aşağı inerek lazy-load görselleri/ürünleri tetikle
+                for step in range(1, 8):
+                    page.evaluate(f"window.scrollTo(0, document.body.scrollHeight * ({step} / 7));")
+                    time.sleep(1)
 
                 html_content = page.content()
                 soup = BeautifulSoup(html_content, "html.parser")
                 
-                # N11 ürün kartlarını doğrudan seç
-                kartlar = soup.select("li.column, div.column, div.pro, div.productItem")
+                # N11 ürün kartlarını kapsayan tüm olası sınıflar
+                kartlar = soup.select("li.column, div.column, div.pro, div.productItem, li.pro")
                 if not kartlar:
                     kartlar = soup.find_all(["li", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["column", "pro", "product"]))
 
@@ -124,11 +123,11 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # Ürün adı
+                    # Ürün adı alma
                     baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
                     urun_adi = baslik_elem.text.strip() if baslik_elem else (link_elem.text.strip() or "Ürün")
 
-                    # Sadece bu kartın içindeki fiyat etiketlerini bul
+                    # Fiyat alma
                     fiyat_etiketleri = kart.select("ins, span.newPrice, div.price, span.price, p.price")
                     fiyatlar = []
                     
@@ -138,7 +137,6 @@ def main():
                             fiyatlar.append(f)
 
                     if not fiyatlar:
-                        # Eğer özel etiket bulunamazsa kartın kendi metninden güvenli arama yap
                         f = fiyat_temizle(kart.get_text())
                         if f > 0:
                             fiyatlar.append(f)
@@ -146,7 +144,6 @@ def main():
                     if not fiyatlar:
                         continue
 
-                    # Sepet indirimi veya alternatif etiketler varsa en düşük mantıklı fiyatı seç
                     fiyat = min(fiyatlar)
                     if fiyat <= 0:
                         continue
