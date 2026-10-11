@@ -46,7 +46,7 @@ def fiyat_donustur(metin):
     if not metin:
         return 0.0
     
-    # Metin içinde watt/ml vb. geçiyorsa kesinlikle fiyat olamaz
+    # Teknik birimler varsa ele
     if re.search(r'\d+\s*(w|watt|ml|lt|gb|mah|cm|parça)\b', metin.lower()):
         return 0.0
 
@@ -67,33 +67,33 @@ def fiyat_donustur(metin):
 
     try:
         f = float(val)
-        # Gerçek piyasa fiyat aralığı (15 TL - 300.000 TL)
         return f if 15.0 <= f <= 300000.0 else 0.0
     except:
         return 0.0
 
-def gercek_urun_fiyati_bul(kutu):
+def izole_urun_fiyati_bul(kutu):
     """
-    Asla genel metin taramaz. Yalnızca N11'in gerçek fiyat elementlerini 
-    (ins, newPrice class'ları) arar. Bulamazsa 0 döner (yanlış fiyat yazmaktansa atlar).
+    Sadece ve sadece o ürün kartının (kutu) YEREL İÇERİĞİNDEKİ fiyat etiketlerini tarar.
+    Asla sayfa genelinde yukarı çıkmaz.
     """
-    # N11'de fiyatın yer aldığı kesin etiketler
-    fiyat_adaylari = kutu.select("ins, span.newPrice, div.price, span.price, p.price, .p-price")
+    # Kartın içindeki fiyat belirten etiketler
+    fiyat_elementleri = kutu.find_all(["ins", "span", "div", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "amount", "discount"]))
     
     fiyatlar = []
-    for elem in fiyat_adaylari:
-        f = fiyat_donustur(elem.text)
-        if f > 0:
-            fiyatlar.append(f)
-            
+    for elem in fiyat_elementleri:
+        # Güvenlik kontrolü: Bu element gerçekten bu kutunun içinde mi?
+        if elem.find_parent("li") == kutu or elem.find_parent("div", class_=lambda x: x and "product" in str(x).lower()) == kutu:
+            f = fiyat_donustur(elem.text)
+            if f > 0:
+                fiyatlar.append(f)
+                
     if fiyatlar:
-        # Sepette indirimli veya normal fiyatlar içinde en mantıklı/en düşük olanı al
-        return min(fiyatlar)
+        return min(fiyatlar) # Sepet indirimi varsa en düşük olanı al
         
     return 0.0
 
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (Nokta Atışı Fiyat Modu)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Tam İzole Ürün Modu)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -141,19 +141,19 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
+                    # Ürünün en güvenli üst kapsayıcısını (kartını) bul
                     kutu = a.find_parent("li")
                     if not kutu:
                         kutu = a.find_parent("div", class_=lambda x: x and any(c in str(x).lower() for c in ["column", "pro", "product", "item", "box"]))
                     if not kutu:
-                        kutu = a.parent
+                        continue
 
                     baslik_elem = kutu.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
                     urun_adi = baslik_elem.text.strip() if baslik_elem else (a.text.strip() or "Ürün")
 
-                    # Kesin fiyat çekme fonksiyonu
-                    fiyat = gercek_urun_fiyati_bul(kutu)
+                    fiyat = izole_urun_fiyati_bul(kutu)
                     if fiyat <= 0:
-                        continue  # Etiketi net okunamayan ürünü kaydetme, hata yapma
+                        continue  # Fiyatı kesin olarak doğrulanamayan ürünü kaydetme
 
                     gorulen_urunler.add(urun_id)
                     toplam_urun += 1
