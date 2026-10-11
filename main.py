@@ -63,7 +63,7 @@ def fiyat_metnini_temizle(metin):
 
         val = float(raw_val)
         
-        # 🚨 Aksesuarları ve küçük ıvır zıvırları elemek için alt sınır 1.000 TL yapıldı
+        # 1.000 TL ile 300.000 TL arasındaki gerçek büyük ürün fiyatlarını kabul et
         if 1000.0 <= val <= 300000.0:
             return val
             
@@ -72,7 +72,7 @@ def fiyat_metnini_temizle(metin):
         return 0.0
 
 def main():
-    print("Doğrudan Ana Fiyat Odaklı Temiz Tarama Başlatılıyor...")
+    print("Esnek ve Kesin Ürün Fiyat Taraması Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -118,25 +118,28 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # 🚨 RASTGELE EN KÜÇÜK SAYIYI DEĞİL, DOĞRUDAN N11 ANA FİYAT ETİKETİNİ AL
-                    fiyat_tag = kart.find("ins", class_="newPrice") or kart.find("div", class_="priceContainer")
-                    if not fiyat_tag:
-                        # Alternatif esnek arama
-                        fiyat_tag = kart.find("ins") or kart.find("span", class_=re.compile(r'newPrice', re.I))
+                    # Kart içindeki tüm olası fiyat içeren alanları ve metinleri tara
+                    fiyat_adaylari = kart.find_all(["ins", "span", "div", "p"], class_=re.compile(r'(price|fiyat|new|amount|value)', re.I))
+                    if not fiyat_adaylari:
+                        fiyat_adaylari = kart.find_all(text=re.compile(r'TL|₺'))
 
-                    if not fiyat_tag:
+                    bulunan_fiyat = 0.0
+                    for aday in fiyat_adaylari:
+                        metin = aday.get_text() if hasattr(aday, 'get_text') else str(aday)
+                        
+                        # Taksit veya vade geçenleri eliyoruz
+                        if any(kelime in metin.lower() for kelime in ['taksit', 'ay', 'başlayan', 'seçeneği']):
+                            continue
+
+                        temiz_fiyat = fiyat_metnini_temizle(metin)
+                        if temiz_fiyat > 0:
+                            bulunan_fiyat = temiz_fiyat
+                            break  # İlk geçerli ve mantıklı fiyatı al ve dur
+
+                    if bulunan_fiyat <= 0:
                         continue
 
-                    fiyat_metni = fiyat_tag.get_text().strip()
-                    
-                    # Taksit veya vade kelimesi geçiyorsa direkt atla
-                    if any(kelime in fiyat_metni.lower() for kelime in ['taksit', 'ay', 'başlayan']):
-                        continue
-
-                    fiyat = fiyat_metnini_temizle(fiyat_metni)
-
-                    if fiyat <= 0:
-                        continue
+                    fiyat = bulunan_fiyat
 
                     gorulen_urunler.add(urun_id)
                     toplam_urun += 1
@@ -144,6 +147,10 @@ def main():
 
                     eski_fiyat = eski_veriler.get(urun_id)
                     if eski_fiyat is not None and fiyat < eski_fiyat:
+                        if fiyat < (eski_fiyat * 0.4):
+                            guncel_veriler[str(urun_id)] = eski_fiyat
+                            continue
+
                         mesaj = (
                             f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
                             f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
