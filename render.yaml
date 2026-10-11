@@ -1,6 +1,23 @@
-services:
-  - type: web
-    name: n11-teknosa-bot
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Depoyu Kopyala
+        uses: actions/checkout@v3
+
+      - name: Python Kurulumu
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      # EKLEMEN GEREKEN ADIM BURASI:
+      - name: Gerekli Paketleri Yükle
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Botu Çalıştır
+        run: python main.py
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
