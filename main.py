@@ -9,6 +9,7 @@ DATA_FILE = "fiyatlar.json"
 
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/magaza/teknosa",
+    "N11": "https://www.n11.com/magaza/n11",
     "Mediamarkt": "https://www.n11.com/magaza/mediamarkt",
     "Braunshop": "https://www.n11.com/magaza/braunshop",
     "Korayspor": "https://www.n11.com/magaza/korayspor",
@@ -56,10 +57,10 @@ def main():
         print(f"{magaza_adi} taranıyor...")
         sayfa = 1
         toplam_urun = 0
+        gorulen_urunler = set()
 
-        while True:
-            # n11 sayfalama yapısı: ?pg=1, ?pg=2...
-            url = f"{base_url}?pg={sayfa}" if sayfa == 1 else f"{base_url}?pg={sayfa}"
+        while sayfa <= 15:  # Mağaza başına maksimum 15 sayfa güvenli sınır
+            url = f"{base_url}?pg={sayfa}"
             
             try:
                 response = requests.get(url, headers=HEADERS, timeout=20)
@@ -68,14 +69,13 @@ def main():
 
                 soup = BeautifulSoup(response.text, "html.parser")
                 
-                # n11 mağaza ürün kartları seçicisi
-                urun_kartlari = soup.select("ul.list-items > li, div.column")
+                # Eski çalışan esnek ürün kutusu seçicisi
+                urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in x.lower() for c in ["column", "product", "item"]))
                 
-                # Eğer bu sayfada ürün bulunamadıysa döngüyü bitir (Son sayfayı geçtik demektir)
                 if not urun_kartlari:
                     break
 
-                bulunan_sayfa_urunu = 0
+                sayfa_yeni_urun = 0
                 for kart in urun_kartlari:
                     link_elem = kart.find("a", href=True)
                     if not link_elem:
@@ -85,12 +85,20 @@ def main():
                     if urun_link.startswith("/"):
                         urun_link = "https://www.n11.com" + urun_link
 
-                    # Ürün adını al
-                    baslik_elem = kart.find(["h3", "h4", "span"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name"]))
+                    urun_id = urun_link.split("?")[0]
+                    
+                    # Eğer bu sayfadaki ürünleri daha önce gördüysek, N11 son sayfadan sonra
+                    # başa dönüyor demektir, döngüyü kıralım.
+                    if urun_id in gorulen_urunler:
+                        continue
+                    
+                    gorulen_urunler.add(urun_id)
+                    sayfa_yeni_urun += 1
+
+                    baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in x.lower() for c in ["title", "name", "desc"]))
                     urun_adi = baslik_elem.text.strip() if baslik_elem else "Ürün"
 
-                    # Fiyatı al
-                    fiyat_elem = kart.find(["ins", "span", "div"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount"]))
+                    fiyat_elem = kart.find(["ins", "span", "div", "p"], class_=lambda x: x and any(c in x.lower() for c in ["price", "new", "amount"]))
                     if not fiyat_elem:
                         fiyat_elem = kart.find(string=lambda t: t and "TL" in t)
 
@@ -103,7 +111,6 @@ def main():
                         except ValueError:
                             continue
 
-                        urun_id = urun_link.split("?")[0]
                         eski_fiyat = eski_veriler.get(urun_id)
 
                         if eski_fiyat is not None:
@@ -120,10 +127,9 @@ def main():
                         
                         guncel_veriler[str(urun_id)] = fiyat
                         toplam_urun += 1
-                        bulunan_sayfa_urunu += 1
 
-                # Eğer bu sayfadan hiç ürün çekemediysek veya mağazanın son sayfasına geldiysek döngüyü kır
-                if bulunan_sayfa_urunu == 0 or sayfa > 20:  # Güvenlik sınırı (maksimum 20 sayfa = çok büyük mağazalar için)
+                # Eğer bu sayfada hiç yeni ürün yakalayamadıysak sayfa bitti demektir
+                if sayfa_yeni_urun == 0:
                     break
 
                 sayfa += 1
