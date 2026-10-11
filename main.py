@@ -42,8 +42,32 @@ def yeni_fiyatlari_kaydet(veri):
     except:
         pass
 
+def fiyat_temizle(metin):
+    """
+    N11 fiyat metinlerini (örn: '2.352,93 TL', '2352.93', '2.352 TL') float fiyata dönüştürür.
+    """
+    if not metin:
+        return 0.0
+    
+    # Sadece rakam, nokta ve virgülleri tut
+    m = re.search(r'[\d\.\,]+', metin.replace("TL", "").strip())
+    if not m:
+        return 0.0
+    
+    val = m.group()
+    if "." in val and "," in val:
+        val = val.replace(".", "").replace(",", ".")
+    elif "," in val:
+        val = val.replace(",", ".")
+    
+    try:
+        f = float(val)
+        return f if 15.0 <= f <= 300000.0 else 0.0
+    except:
+        return 0.0
+
 def main():
-    print("Fiyat ve Kupon taraması başlatılıyor (İzole Ürün Fiyat Modu)...")
+    print("Fiyat ve Kupon taraması başlatılıyor (Kararlı Ürün/Fiyat Modu)...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -63,11 +87,11 @@ def main():
                 page.goto(base_url, timeout=60000, wait_until="domcontentloaded")
                 time.sleep(3)
 
-                # Sayfanın en altına kaydırarak tüm ürünlerin yüklenmesini sağla
+                # Tüm ürünlerin dinamik yüklenmesi için 10 adım aşağı kaydır
                 onceki_yukseklik = 0
-                for _ in range(15):
+                for _ in range(10):
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
-                    time.sleep(2)
+                    time.sleep(1.5)
                     yeni_yukseklik = page.evaluate("document.body.scrollHeight")
                     if yeni_yukseklik == onceki_yukseklik:
                         break
@@ -76,15 +100,20 @@ def main():
                 html_content = page.content()
                 soup = BeautifulSoup(html_content, "html.parser")
                 
-                urun_linkleri = soup.find_all("a", href=True)
+                # N11 ürün kartları
+                urun_kartlari = soup.select("li.column, div.column, div.pro, div.productItem")
+                if not urun_kartlari:
+                    # Alternatif esnek arama
+                    urun_kartlari = soup.find_all(["li", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["column", "pro", "product"]))
+
                 toplam_urun = 0
 
-                for a in urun_linkleri:
-                    href = a["href"]
-                    if "/urun/" not in href:
+                for kart in urun_kartlari:
+                    link_elem = kart.find("a", href=True)
+                    if not link_elem or "/urun/" not in link_elem["href"]:
                         continue
 
-                    urun_link = href
+                    urun_link = link_elem["href"]
                     if urun_link.startswith("/"):
                         urun_link = "https://www.n11.com" + urun_link
 
@@ -92,65 +121,28 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # Ürünün en küçük tekil kapsayıcısını bul
-                    kutu = a.find_parent("li")
-                    if not kutu:
-                        kutu = a.find_parent("div", class_=lambda x: x and any(c in str(x).lower() for c in ["column", "product", "item", "pro", "box"]))
-                    if not kutu:
-                        continue
-
                     # Ürün adı
-                    urun_adi = "Ürün"
-                    title_elem = kutu.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
-                    if title_elem:
-                        urun_adi = title_elem.text.strip()
-                    elif a.text.strip():
-                        urun_adi = a.text.strip()
+                    baslik_elem = kart.find(["h3", "h4", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["title", "name", "desc"]))
+                    urun_adi = baslik_elem.text.strip() if baslik_elem else (link_elem.text.strip() or "Ürün")
 
-                    # --- KESİN VE İZOLE FİYAT BULMA ---
+                    # Fiyat bulma (Sadece bu kartın içinden)
                     fiyat = 0.0
+                    fiyat_elem = kart.find(["ins", "span", "div"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "amount", "discount"]))
                     
-                    # Sadece bu kutunun EN İÇİNDEKİ fiyat etiketini arıyoruz (ortak alanlara zıplamaz)
-                    fiyat_adaylari = kutu.find_all(["ins", "div", "span", "p"], class_=lambda x: x and any(c in str(x).lower() for c in ["price", "newprice", "discount", "amount"]))
-                    
-                    for fa in fiyat_adaylari:
-                        fiyat_metni = fa.text.strip()
-                        # Eğer metin içinde TL geçiyorsa veya rakam barındırıyorsa incele
-                        if len(fiyat_metni) < 25 and ("TL" in fiyat_metni or "," in fiyat_metni or "." in fiyat_metni):
-                            temiz_metin = fiyat_metni.replace("TL", "").replace("TL.", "").strip()
-                            if "." in temiz_metin and "," in temiz_metin:
-                                temiz_metin = temiz_metin.replace(".", "").replace(",", ".")
-                            elif "," in temiz_metin:
-                                temiz_metin = temiz_metin.replace(",", ".")
-                            
-                            try:
-                                aday_fiyat = float(temiz_metin)
-                                if 15 <= aday_fiyat <= 300000:
-                                    fiyat = aday_fiyat
-                                    break
-                            except:
-                                pass
+                    if fiyat_elem:
+                        fiyat = fiyat_temizle(fiyat_elem.text)
 
-                    # Eğer etiketle bulunamadıysa kutunun kendi metninde regex ara
+                    # Eğer doğrudan etiketle bulunamadıysa kart metninden regex ile ara
                     if fiyat <= 0:
-                        kutu_metni = kutu.get_text()
-                        bulunanlar = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})\s*TL', kutu_metni)
-                        if bulunanlar:
-                            ham_fiyat = bulunanlar[0].replace(".", "").replace(",", ".")
-                            try:
-                                aday_fiyat = float(ham_fiyat)
-                                if 15 <= aday_fiyat <= 300000:
-                                    fiyat = aday_fiyat
-                            except:
-                                pass
+                        fiyat = fiyat_temizle(kart.get_text())
 
-                    if fiyat < 15 or fiyat > 300000:
+                    if fiyat <= 0:
                         continue
 
                     gorulen_urunler.add(urun_id)
                     toplam_urun += 1
 
-                    # Önceki fiyat ile karşılaştırma ve bildirim
+                    # Fiyat düşüşü kontrolü
                     eski_fiyat = eski_veriler.get(urun_id)
                     if eski_fiyat is not None and fiyat < eski_fiyat:
                         mesaj = (
