@@ -45,9 +45,6 @@ def yeni_fiyatlari_kaydet(veri):
         pass
 
 def fiyat_metnini_temizle(metin):
-    """
-    N11 Türkiye fiyat formatını (Örn: 17.999,00 TL veya 14.534,16) tam hassasiyetle float sayıya çevirir.
-    """
     if not metin:
         return 0.0
     
@@ -58,17 +55,14 @@ def fiyat_metnini_temizle(metin):
     raw_val = match.group(1).strip()
     
     try:
-        # Virgül varsa kuruş ayracıdır (17.999,00 -> 17999.00)
         if "," in raw_val:
             raw_val = raw_val.replace(".", "").replace(",", ".")
         else:
-            # Virgül yoksa ve nokta varsa (17.999 -> 17999) binlik ayracıdır
             if "." in raw_val and len(raw_val.split(".")[-1]) == 3:
                 raw_val = raw_val.replace(".", "")
 
         val = float(raw_val)
         
-        # Gerçekçi fiyat aralığı (50 TL ile 300.000 TL arası)
         if 50.0 <= val <= 300000.0:
             return val
             
@@ -77,7 +71,7 @@ def fiyat_metnini_temizle(metin):
         return 0.0
 
 def main():
-    print("Gelişmiş Çoklu Sayfa ve Temiz Fiyat Taraması Başlatılıyor...")
+    print("Sepet İndirimi Destekli Fiyat Taraması Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -93,7 +87,6 @@ def main():
         gorulen_urunler = set()
         toplam_urun = 0
 
-        # Her mağazadan ilk 6 sayfayı tara (Daha fazla ve çeşitli ürün yakalar)
         for sayfa in range(1, 7):
             url = f"{base_url}&pg={sayfa}"
             
@@ -124,7 +117,10 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
+                    # 1. Öncelik: Sepetteki İndirimli Fiyat Alanı (Örn: sepette, basketPrice, ins)
                     fiyat_tag = (
+                        kart.find("span", class_=re.compile(r'(basket|sepette)', re.I)) or
+                        kart.find("div", class_=re.compile(r'(basket|sepette)', re.I)) or
                         kart.find("ins") or 
                         kart.find("div", class_=re.compile(r'(price|fiyat)', re.I)) or 
                         kart.find("span", class_=re.compile(r'(price|fiyat|newPrice)', re.I))
@@ -170,7 +166,7 @@ def main():
         print(f"==> {magaza_adi} Tamamlandı - Toplam: {toplam_urun} ürün")
 
     yeni_fiyatlari_kaydet(guncel_veriler)
-    print("\nTüm tarama başarıyla tamamlandı, veritabanı güncellendi!")
+    print("\nTüm tarama tamamlandı!")
 
 if __name__ == "__main__":
     main()
