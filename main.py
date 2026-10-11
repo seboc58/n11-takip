@@ -2,28 +2,29 @@ import os
 import json
 import time
 import re
-from playwright.sync_api import sync_playwright
+import requests
+from bs4 import BeautifulSoup
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 DATA_FILE = "fiyatlar.json"
 
 MAGAZALAR = {
-    "Teknosa": "https://www.n11.com/magaza/teknosa/tum-urunler",
-    "Mediamarkt": "https://www.n11.com/magaza/mediamarkt/tum-urunler",
-    "Braunshop": "https://www.n11.com/magaza/braunshop/tum-urunler",
-    "Korayspor": "https://www.n11.com/magaza/korayspor/tum-urunler",
-    "Skechers": "https://www.n11.com/magaza/skechers/tum-urunler",
-    "Karaca": "https://www.n11.com/magaza/karaca/tum-urunler",
-    "Tefal": "https://www.n11.com/magaza/tefal/tum-urunler",
+    "Teknosa": "https://www.n11.com/arama?q=teknosa&srt=PRICE_LOW",
+    "Mediamarkt": "https://www.n11.com/arama?q=mediamarkt&srt=PRICE_LOW",
+    "Braunshop": "https://www.n11.com/arama?q=braunshop&srt=PRICE_LOW",
+    "Korayspor": "https://www.n11.com/arama?q=korayspor&srt=PRICE_LOW",
+    "Skechers": "https://www.n11.com/arama?q=skechers&srt=PRICE_LOW",
+    "Karaca": "https://www.n11.com/arama?q=karaca&srt=PRICE_LOW",
+    "Tefal": "https://www.n11.com/arama?q=tefal&srt=PRICE_LOW",
 }
 
-def telegram_mesaj_gonder(mesaj, page_client):
+def telegram_mesaj_gonder(mesaj):
     if not TELEGRAM_TOKEN or not CHAT_ID:
         return
     try:
         api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        page_client.request.post(api_url, data={"chat_id": CHAT_ID, "text": mesaj, "parse_mode": "HTML"})
+        requests.post(api_url, data={"chat_id": CHAT_ID, "text": mesaj, "parse_mode": "HTML"}, timeout=10)
     except Exception as e:
         print(f"Telegram gönderme hatasi: {e}")
 
@@ -46,133 +47,106 @@ def yeni_fiyatlari_kaydet(veri):
 def fiyat_temizle(metin):
     if not metin:
         return 0.0
-    metin_lower = metin.lower()
-    if any(kriter in metin_lower for kriter in ['taksit', 'ay', '%', 'indirim', 'kargo', 'puan']):
-        return 0.0
-    if re.search(r'\d+\s*(w|watt|ml|lt|gb|mah|cm|parça|ay)\b', metin_lower):
-        return 0.0
-
-    m = re.search(r'([\d\.\,]+)', metin.replace("TL", "").replace("TL.", "").strip())
+    metin_temiz = metin.replace("TL", "").replace("TL.", "").strip()
+    m = re.findall(r'([\d\.]+[\d\,]+)', metin_temiz)
     if not m:
-        return 0.0
-    
-    val = m.group(1)
-    if "." in val and "," in val:
-        val = val.replace(".", "").replace(",", ".")
-    elif "," in val:
-        val = val.replace(",", ".")
-    else:
-        if val.count(".") == 1 and len(val.split(".")[1]) == 2:
-            pass 
-        elif "." in val:
-            val = val.replace(".", "")
+        m = re.findall(r'(\d+)', metin_temiz)
+        if not m:
+            return 0.0
 
-    try:
-        f = float(val)
-        return f if 15.0 <= f <= 300000.0 else 0.0
-    except:
-        return 0.0
+    for val_str in m:
+        try:
+            clean_val = val_str.replace(".", "").replace(",", ".")
+            if "." in clean_val and clean_val.count(".") > 1:
+                clean_val = clean_val.replace(".", "", clean_val.count(".") - 1)
+            
+            f = float(clean_val)
+            if 15.0 <= f <= 300000.0:
+                return f
+        except:
+            continue
+    return 0.0
 
 def main():
-    print("Çerez Simülasyonlu Güvenli Tarama Başlatılıyor...")
+    print("Arama Tabanlı Çok Sayfalı Tarama Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-accelerated-2d-canvas",
-                "--no-first-run",
-                "--no-zygote",
-                "--single-process",
-                "--disable-gpu"
-            ]
-        )
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080},
-            extra_http_headers={
-                "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-            }
-        )
-        page = context.new_page()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://www.n11.com/"
+    }
 
-        # Önce ana sayfaya gidip çerezleri/oturum token'ını alalım
-        try:
-            page.goto("https://www.n11.com", timeout=30000)
-            time.sleep(2)
-        except:
-            pass
+    for magaza_adi, base_url in MAGAZALAR.items():
+        print(f"\n[{magaza_adi}] taranıyor...")
+        gorulen_urunler = set()
+        toplam_urun = 0
 
-        for magaza_adi, base_url in MAGAZALAR.items():
-            print(f"\n{magaza_adi} taranıyor...")
-            gorulen_urunler = set()
-
+        for sayfa in range(1, 11):
+            url = f"{base_url}&pg={sayfa}"
+            
             try:
-                page.goto(base_url, timeout=60000, wait_until="domcontentloaded")
-                time.sleep(4)
+                response = requests.get(url, headers=headers, timeout=30)
+                if response.status_code != 200:
+                    break
 
-                for step in range(1, 6):
-                    page.evaluate(f"window.scrollTo(0, document.body.scrollHeight * ({step} / 5));")
-                    time.sleep(1)
-
-                link_elements = page.locator("a[href*='/urun/']")
-                count = link_elements.count()
-                toplam_urun = 0
-
-                for i in range(count):
-                    try:
-                        el = link_elements.nth(i)
-                        urun_link = el.get_attribute("href")
-                        if not urun_link or "/urun/" not in urun_link:
-                            continue
-
-                        if urun_link.startswith("/"):
-                            urun_link = "https://www.n11.com" + urun_link
-
-                        urun_id = urun_link.split("?")[0]
-                        if urun_id in gorulen_urunler:
-                            continue
-
-                        parent = el.locator("xpath=ancestor::*[contains(@class, 'column') or contains(@class, 'pro') or contains(@class, 'item') or self::li or self::div]").first
-                        card_text = parent.inner_text() if parent.count() > 0 else el.inner_text()
-
-                        fiyat = fiyat_temizle(card_text)
-                        if fiyat <= 0:
-                            continue
-
-                        gorulen_urunler.add(urun_id)
-                        toplam_urun += 1
-
-                        eski_fiyat = eski_veriler.get(urun_id)
-                        if eski_fiyat is not None and fiyat < eski_fiyat:
-                            mesaj = (
-                                f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
-                                f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
-                                f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
-                                f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
-                                f"🔗 <a href='{urun_link}'>Ürüne Git</a>"
-                            )
-                            telegram_mesaj_gonder(mesaj, page)
-
-                        guncel_veriler[str(urun_id)] = fiyat
-                    except:
+                soup = BeautifulSoup(response.text, "html.parser")
+                linkler = soup.find_all("a", href=True)
+                
+                sayfa_urun_sayisi = 0
+                for link in linkler:
+                    urun_link = link["href"]
+                    if "/urun/" not in urun_link:
                         continue
 
-                print(f"==> {magaza_adi} Tamamlandı - Toplam taranan ürün: {toplam_urun}")
+                    if urun_link.startswith("/"):
+                        urun_link = "https://www.n11.com" + urun_link
+
+                    urun_id = urun_link.split("?")[0]
+                    if urun_id in gorulen_urunler:
+                        continue
+
+                    parent = link.find_parent(["li", "div", "article"])
+                    kapsayici_metin = parent.get_text() if parent else link.get_text()
+
+                    fiyat = fiyat_temizle(kapsayici_metin)
+                    if fiyat <= 0:
+                        continue
+
+                    gorulen_urunler.add(urun_id)
+                    toplam_urun += 1
+                    sayfa_urun_sayisi += 1
+
+                    eski_fiyat = eski_veriler.get(urun_id)
+                    if eski_fiyat is not None and fiyat < eski_fiyat:
+                        mesaj = (
+                            f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
+                            f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
+                            f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
+                            f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
+                            f"🔗 <a href='{urun_link}'>Ürüne Git</a>"
+                        )
+                        telegram_mesaj_gonder(mesaj)
+
+                    guncel_veriler[str(urun_id)] = fiyat
+
+                print(f" -> Sayfa {sayfa} tarandı. Yeni ürün: {sayfa_urun_sayisi} (Toplam: {toplam_urun})")
+                
+                if sayfa_urun_sayisi == 0:
+                    break
+                
+                time.sleep(0.5)
 
             except Exception as e:
-                print(f"{magaza_adi} taranırken hata: {e}")
+                print(f"Sayfa {sayfa} hatası: {e}")
+                break
 
-        browser.close()
+        print(f"==> {magaza_adi} Tamamlandı - Toplam taranan benzersiz ürün: {toplam_urun}")
 
     yeni_fiyatlari_kaydet(guncel_veriler)
-    print("\nTüm tarama tamamlandı.")
+    print("\nTüm arama taramaları tamamlandı, fiyatlar kaydedildi.")
 
 if __name__ == "__main__":
     main()
