@@ -19,6 +19,7 @@ BOS_SAYFA_LIMITI = 2
 
 MAGAZALAR = {
  "Teknosa": "https://www.n11.com/arama?q=teknosa",
+ "N11": "https://www.n11.com/arama?q=n11",
  "Mediamarkt": "https://www.n11.com/arama?q=mediamarkt",
  "Braunshop": "https://www.n11.com/arama?q=braunshop",
  "Korayspor": "https://www.n11.com/arama?q=korayspor",
@@ -30,12 +31,13 @@ MAGAZALAR = {
 # Arama grubu -> kabul edilen satıcı adları (küçük harf alt string)
 MAGAZA_SATICI_ESLESME = {
  "Teknosa": ["teknosa"],
- "Mediamarkt": ["mediamarkt", "media markt", "media-markt"],
- "Braunshop": ["braunshop", "braun shop", "braun"],
- "Korayspor": ["korayspor", "koray spor"],
+ "Mediamarkt": ["mediamarkt"],
+ "Braunshop": ["braunshop"],
+ "Korayspor": ["korayspor"],
  "Skechers": ["skechers"],
  "Karaca": ["karaca"],
  "Tefal": ["tefal"],
+ "N11": ["n11"],
 }
 
 FIYAT_CLASS = re.compile(
