@@ -483,10 +483,20 @@ def main():
                         fiyatsiz_atilan += 1
                         continue
 
-                    satici = satici_adi_bul(kart, link_tag)
-                    if not satici_eslesiyor_mu(magaza_adi, satici):
-                        yanlis_satici += 1
-                        continue
+                    
+satici = satici_adi_bul(kart, link_tag)
+
+if sayfa == 1 and yanlis_satici < 5:
+    print(
+        f"    SATICI TESTİ: grup={magaza_adi!r} | "
+        f"okunan_satıcı={satici!r} | "
+        f"url={link_tag.get('href', '')!r}"
+    )
+
+if not satici_eslesiyor_mu(magaza_adi, satici):
+    yanlis_satici += 1
+    continue
+
 
                     ad = urun_adi_bul(kart, link_tag)
                     kupon_metni = kupon_metni_bul(kart)
