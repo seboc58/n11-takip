@@ -2,10 +2,11 @@ import os
 import json
 import time
 import re
+import statistics
 import requests
 from html import escape
 from urllib.parse import urljoin, urlsplit, urlunsplit
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
@@ -14,12 +15,11 @@ DATA_FILE = "fiyatlar.json"
 MIN_FIYAT = 100.0
 MAX_FIYAT = 300000.0
 SAYFA_SAYISI = 15
-BOS_SAYFA_LIMITI = 2  # üst üste bu kadar boş sayfa gelirse mağazayı bitir
+BOS_SAYFA_LIMITI = 2
 
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/arama?q=teknosa",
-    "n11": "https://www.n11.com/arama?q=n11",
-    "Jack&Jones": "https://www.n11.com/arama?q=jack-jones",
+    "N11": "https://www.n11.com/arama?q=n11",
     "Mediamarkt": "https://www.n11.com/arama?q=mediamarkt",
     "Braunshop": "https://www.n11.com/arama?q=braunshop",
     "Korayspor": "https://www.n11.com/arama?q=korayspor",
@@ -27,6 +27,23 @@ MAGAZALAR = {
     "Karaca": "https://www.n11.com/arama?q=karaca",
     "Tefal": "https://www.n11.com/arama?q=tefal",
 }
+
+FIYAT_CLASS = re.compile(
+    r"(price|fiyat|newPrice|salePrice|currentPrice|oldPrice|amount|value)",
+    re.I,
+)
+SEPET_CLASS = re.compile(
+    r"(coupon|kupon|basket|sepette|discount|indirim|campaign|kampanya)",
+    re.I,
+)
+KART_CLASS = re.compile(
+    r"(column|pro|product|itemCard|catalog|listing|card|result)",
+    re.I,
+)
+ELENECEK = re.compile(
+    r"taksit|aylık|ayda|başlayan|seçeneği|kargo|puan|yorum|satış",
+    re.I,
+)
 
 
 def telegram_mesaj_gonder(mesaj):
@@ -36,11 +53,7 @@ def telegram_mesaj_gonder(mesaj):
         api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         r = requests.post(
             api_url,
-            data={
-                "chat_id": CHAT_ID,
-                "text": mesaj,
-                "parse_mode": "HTML",
-            },
+            data={"chat_id": CHAT_ID, "text": mesaj, "parse_mode": "HTML"},
             timeout=10,
         )
         return r.ok
@@ -77,8 +90,7 @@ def fiyat_metnini_temizle(metin):
         return 0.0
 
     metin = str(metin).replace("\xa0", " ").strip()
-
-    if re.search(r"taksit|aylık|ayda|başlayan|seçeneği", metin, re.I):
+    if ELENECEK.search(metin):
         return 0.0
 
     match = re.search(
@@ -89,25 +101,20 @@ def fiyat_metnini_temizle(metin):
         return 0.0
 
     raw_val = match.group(0).replace(" ", "")
-
     try:
         if "," in raw_val:
             raw_val = raw_val.replace(".", "").replace(",", ".")
         elif "." in raw_val and len(raw_val.rsplit(".", 1)[-1]) == 3:
             raw_val = raw_val.replace(".", "")
-
         val = float(raw_val)
-
         if MIN_FIYAT <= val <= MAX_FIYAT:
             return round(val, 2)
-
-        return 0.0
     except Exception:
-        return 0.0
+        pass
+    return 0.0
 
 
 def urun_url_temizle(url):
-    """Her zaman aynı formata getir: full URL, query yok, trailing slash yok."""
     url = urljoin("https://www.n11.com/", url)
     p = urlsplit(url)
     return urlunsplit((p.scheme, p.netloc, p.path.rstrip("/"), "", ""))
@@ -116,46 +123,41 @@ def urun_url_temizle(url):
 def metin_al(element):
     if not element:
         return ""
+    if isinstance(element, NavigableString):
+        return " ".join(str(element).split())
     return " ".join(element.get_text(" ", strip=True).split())
 
 
 def urun_adi_bul(kart, link_tag):
-    for etiket in ("h3", "h2"):
-        el = kart.find(etiket)
-        ad = metin_al(el)
-        if len(ad) > 3:
-            return ad[:180]
-
-    if link_tag is not None and link_tag.get("title"):
-        return link_tag["title"].strip()[:180]
-
-    img = kart.find("img", alt=True) if kart else None
-    if img and img.get("alt", "").strip():
-        return img["alt"].strip()[:180]
+    if kart is not None:
+        for etiket in ("h3", "h2"):
+            el = kart.find(etiket)
+            ad = metin_al(el)
+            if len(ad) > 3:
+                return ad[:180]
+        img = kart.find("img", alt=True)
+        if img and img.get("alt", "").strip():
+            return img["alt"].strip()[:180]
 
     if link_tag is not None:
-        return metin_al(link_tag)[:180] or "Ürün"
+        if link_tag.get("title"):
+            return link_tag["title"].strip()[:180]
+        ad = metin_al(link_tag)
+        if len(ad) > 3:
+            return ad[:180]
     return "Ürün"
 
 
 def kupon_metni_bul(kart):
-    """Karttaki kupon / sepette / kampanya metnini çıkarır."""
     if kart is None:
         return None
 
     adaylar = []
-
-    for el in kart.find_all(
-        ["span", "div", "p", "em", "strong"],
-        class_=re.compile(
-            r"(coupon|kupon|campaign|kampanya|basket|sepette|discount|indirim|badge)",
-            re.I,
-        ),
-    ):
+    for el in kart.find_all(["span", "div", "p", "em", "strong"], class_=SEPET_CLASS):
         metin = metin_al(el)
-        if not metin or len(metin) < 3:
-            continue
-        if re.search(r"kupon|sepette|sepet fiyat|kampanya|indirim", metin, re.I):
+        if metin and len(metin) >= 3 and re.search(
+            r"kupon|sepette|sepet fiyat|kampanya|indirim", metin, re.I
+        ):
             adaylar.append(metin)
 
     if not adaylar:
@@ -169,111 +171,161 @@ def kupon_metni_bul(kart):
 
     if not adaylar:
         return None
-
-    adaylar = sorted(set(adaylar), key=len)
-    return adaylar[0][:120]
+    return sorted(set(adaylar), key=len)[0][:120]
 
 
-def urun_fiyati_bul(kart):
+def dar_kart_bul(link):
     """
-    Liste fiyatı + sepette fiyatı ayrı bulur.
-    Takip için: sepette varsa onu, yoksa liste fiyatını kullanır.
+    Link için mümkün olan en dar ürün kartını bul.
+    Geniş div'lere çıkma — yanlış fiyatın ana sebebi buydu.
     """
-    if kart is None:
-        return 0.0, 0.0, 0.0
+    # 1) li / article
+    kart = link.find_parent(["li", "article"])
+    if kart is not None:
+        # Kart içinde tek ürün linki ailesi olsun diye fazla büyümesin
+        return kart
 
+    # 2) class'ı ürün kartına benzeyen div
+    for parent in link.parents:
+        if parent.name != "div":
+            continue
+        classes = " ".join(parent.get("class") or [])
+        if KART_CLASS.search(classes):
+            # Çok büyük konteynerleri ele (içinde onlarca ürün varsa)
+            urun_link_sayisi = len(parent.find_all("a", href=re.compile(r"/urun/")))
+            if urun_link_sayisi <= 6:  # aynı ürünün birden fazla linki olabilir
+                return parent
+
+    # 3) Son çare: linkin kendisi + yakın kardeşler (parent'ın parent'ı değil)
+    # Sadece bir üst div, o da küçükse
+    p = link.parent
+    if p is not None and p.name in ("div", "span"):
+        urun_link_sayisi = len(p.find_all("a", href=re.compile(r"/urun/")))
+        if urun_link_sayisi <= 4:
+            return p
+
+    return link
+
+
+def _fiyat_adaylari_topla(kok, sadece_sepet=False):
+    """Belirli bir HTML kökünden fiyat adayları çıkar."""
+    if kok is None:
+        return []
+
+    adaylar = []
+    class_re = SEPET_CLASS if sadece_sepet else FIYAT_CLASS
+
+    for el in kok.find_all(["ins", "del", "span", "div", "p", "strong", "b"], class_=class_re):
+        metin = metin_al(el)
+        if not metin:
+            continue
+        if not sadece_sepet and re.search(r"sepette|sepet fiyat", metin, re.I):
+            continue
+        f = fiyat_metnini_temizle(metin)
+        if f > 0:
+            adaylar.append(f)
+
+    # Class tutmazsa: kısa metin düğümlerinde TL ara (sadece küçük köklerde)
+    if not adaylar and not sadece_sepet:
+        metin = metin_al(kok)
+        # Çok uzun metin = muhtemelen birden fazla ürün; güvenme
+        if len(metin) <= 400:
+            for m in re.finditer(
+                r"(\d{1,3}(?:[.\s]\d{3})+|\d+)(?:,\d{1,2})?\s*(?:TL|₺)",
+                metin,
+                re.I,
+            ):
+                f = fiyat_metnini_temizle(m.group(0))
+                if f > 0:
+                    adaylar.append(f)
+
+    if sadece_sepet and not adaylar:
+        metin = metin_al(kok)
+        if len(metin) <= 400:
+            m = re.search(
+                r"sepette\s*[^\d]{0,10}(\d{1,3}(?:[.\s]\d{3})+|\d+)(?:,\d{1,2})?",
+                metin,
+                re.I,
+            )
+            if m:
+                f = fiyat_metnini_temizle(m.group(0))
+                if f > 0:
+                    adaylar.append(f)
+
+    return adaylar
+
+
+def _en_mantikli_fiyat(adaylar):
+    """
+    Birden fazla fiyat adayı varsa uçları ele.
+    Tek ürün kartında genelde liste + indirimli olur; en düşük mantıklı olanı tercih etme
+    yerine medyana yakın, sepette ayrı tutulduğu için burada liste için medyan/min seç.
+    """
+    if not adaylar:
+        return 0.0
+    uniq = sorted(set(adaylar))
+    if len(uniq) == 1:
+        return uniq[0]
+    # Aşırı sapan değerleri at (ör. yanlış parse 199 vs 19999)
+    med = statistics.median(uniq)
+    filt = [x for x in uniq if 0.4 * med <= x <= 2.5 * med]
+    if not filt:
+        filt = uniq
+    # Liste fiyatı için genelde görünen güncel fiyat = filt içindeki düşük-orta
+    # Birden fazla ise en küçüğü alma riskli olabilir; medyan daha güvenli
+    return round(float(statistics.median(filt)), 2)
+
+
+def urun_fiyati_bul(kart, link_tag=None):
+    """
+    Önce link civarı, sonra dar kart.
+    Geniş sayfa metninden asla fiyat okuma.
+    """
     liste_fiyat = 0.0
     sepette_fiyat = 0.0
 
-    # 1) Normal fiyat alanları
-    alanlar = kart.find_all(
-        ["ins", "span", "div", "p"],
-        class_=re.compile(
-            r"(price|fiyat|newPrice|salePrice|currentPrice|new|amount|value)",
-            re.I,
-        ),
-    )
-    for alan in alanlar:
-        metin = metin_al(alan)
-        if re.search(r"sepette|sepet fiyat", metin, re.I):
-            continue
-        if any(
-            k in metin.lower()
-            for k in ("taksit", "aylık", "ayda", "başlayan", "seçeneği")
-        ):
-            continue
-        f = fiyat_metnini_temizle(metin)
-        if f > 0:
-            liste_fiyat = f
-            break
+    # Arama sırası: link'in dar parent'ı → kart
+    kokler = []
+    if link_tag is not None:
+        # link etrafındaki küçük alan
+        if link_tag.parent is not None:
+            kokler.append(link_tag.parent)
+        kokler.append(link_tag)
+    if kart is not None and kart not in kokler:
+        kokler.append(kart)
 
-    # 2) Sepette / kupon fiyatı
-    alanlar = kart.find_all(
-        ["span", "div", "p", "ins"],
-        class_=re.compile(
-            r"(coupon|kupon|basket|sepette|discount|indirim|campaign)",
-            re.I,
-        ),
-    )
-    for alan in alanlar:
-        metin = metin_al(alan)
-        f = fiyat_metnini_temizle(metin)
-        if f > 0:
-            sepette_fiyat = f
-            break
+    liste_aday = []
+    sepet_aday = []
 
-    if sepette_fiyat <= 0:
-        tum = metin_al(kart)
-        m = re.search(
-            r"sepette\s*[^\d]{0,10}(\d{1,3}(?:[.\s]\d{3})+|\d+)(?:,\d{1,2})?",
-            tum,
-            re.I,
-        )
-        if m:
-            sepette_fiyat = fiyat_metnini_temizle(m.group(0))
+    for kok in kokler:
+        liste_aday.extend(_fiyat_adaylari_topla(kok, sadece_sepet=False))
+        sepet_aday.extend(_fiyat_adaylari_topla(kok, sadece_sepet=True))
 
-    # Class tutmazsa genel adaylar
-    if liste_fiyat <= 0 and sepette_fiyat <= 0:
-        adaylar = kart.find_all(
-            ["ins", "span", "div", "p"],
-            class_=re.compile(r"(price|fiyat|new|amount|value)", re.I),
-        )
-        if not adaylar:
-            adaylar = kart.find_all(string=re.compile(r"TL|₺"))
-        for aday in adaylar:
-            metin = aday.get_text() if hasattr(aday, "get_text") else str(aday)
-            if any(
-                k in metin.lower()
-                for k in ("taksit", "aylık", "ayda", "başlayan", "seçeneği")
-            ):
-                continue
-            f = fiyat_metnini_temizle(metin)
-            if f > 0:
-                liste_fiyat = f
-                break
+    liste_fiyat = _en_mantikli_fiyat(liste_aday)
+    sepette_fiyat = _en_mantikli_fiyat(sepet_aday)
 
-    fiyat = sepette_fiyat if sepette_fiyat > 0 else liste_fiyat
+    # Sepette, listeden belirgin düşükse kullan; değilse liste
+    if sepette_fiyat > 0 and (liste_fiyat <= 0 or sepette_fiyat <= liste_fiyat):
+        fiyat = sepette_fiyat
+    else:
+        fiyat = liste_fiyat
+
     return liste_fiyat, sepette_fiyat, fiyat
 
 
 def urun_ogelerini_topla(soup):
     """
-    Ürünleri class'a az bağımlı şekilde toplar.
-    Öncelik: /urun/ linkleri. Her benzersiz URL için en yakın kart/konteyner.
+    Her ürün URL'si için TEK temsilci link seç.
+    Tercihen başlıklı / productName linki.
     """
-    sonuc = []  # [(urun_url, kart_element, link_tag), ...]
-    gorulen = set()
+    sonuc = []
+    best = {}  # url -> (skor, link, kart)
 
-    # Debug için class tabanlı kart sayısı
-    class_kartlar = soup.find_all(
-        ["li", "div", "article"],
-        class_=re.compile(r"(column|pro|product|itemCard|catalog|listing)", re.I),
-    )
-    class_kart_sayisi = len(class_kartlar)
-
-    # Ana yöntem: tüm /urun/ linkleri
     tum_linkler = soup.find_all("a", href=re.compile(r"/urun/"))
     link_sayisi = len(tum_linkler)
+
+    class_kartlar = soup.find_all(["li", "div", "article"], class_=KART_CLASS)
+    class_kart_sayisi = len(class_kartlar)
 
     for link in tum_linkler:
         href = link.get("href") or ""
@@ -281,42 +333,32 @@ def urun_ogelerini_topla(soup):
             continue
 
         urun_url = urun_url_temizle(href)
-        if urun_url in gorulen:
-            continue
-        gorulen.add(urun_url)
+        kart = dar_kart_bul(link)
 
-        # Linkin en mantıklı üst konteyneri
-        kart = (
-            link.find_parent(["li", "article"])
-            or link.find_parent(
-                "div",
-                class_=re.compile(
-                    r"(column|pro|product|itemCard|catalog|listing|card)",
-                    re.I,
-                ),
-            )
-            or link.find_parent("div")
-            or link
-        )
+        # Aynı ürün için en iyi linki seç (başlık > title > diğer)
+        skor = 0
+        classes = " ".join(link.get("class") or []).lower()
+        if "plink" in classes or "product" in classes:
+            skor += 3
+        if link.find(["h2", "h3"]):
+            skor += 5
+        if link.get("title"):
+            skor += 2
+        if metin_al(link) and len(metin_al(link)) > 10:
+            skor += 2
+
+        onceki = best.get(urun_url)
+        if onceki is None or skor > onceki[0]:
+            best[urun_url] = (skor, link, kart)
+
+    for urun_url, (_, link, kart) in best.items():
         sonuc.append((urun_url, kart, link))
-
-    # Link hiç yoksa eski class yöntemine düş
-    if not sonuc:
-        for kart in class_kartlar or soup.find_all(["li", "article"]):
-            link = kart.find("a", href=True)
-            if not link or "/urun/" not in (link.get("href") or ""):
-                continue
-            urun_url = urun_url_temizle(link["href"])
-            if urun_url in gorulen:
-                continue
-            gorulen.add(urun_url)
-            sonuc.append((urun_url, kart, link))
 
     return sonuc, class_kart_sayisi, link_sayisi
 
 
 def main():
-    print("Esnek ve Kesin Ürün Fiyat Taraması Başlatılıyor...")
+    print("Fiyat taraması başlıyor (sıkı fiyat modu)...")
     print(
         f"Ayarlar: MIN_FIYAT={MIN_FIYAT}, SAYFA_SAYISI={SAYFA_SAYISI}, "
         f"BOS_SAYFA_LIMITI={BOS_SAYFA_LIMITI}"
@@ -342,17 +384,15 @@ def main():
         bos_sayfa = 0
 
         for sayfa in range(1, SAYFA_SAYISI + 1):
-            # hem &pg= hem ?pg= destekle
             ayirici = "&" if "?" in base_url else "?"
             url = f"{base_url}{ayirici}pg={sayfa}"
 
             try:
                 response = requests.get(url, headers=headers, timeout=30)
                 if response.status_code != 200:
-                    print(f" -> Sayfa {sayfa} HTTP {response.status_code}, atlanıyor.")
+                    print(f" -> Sayfa {sayfa} HTTP {response.status_code}")
                     bos_sayfa += 1
                     if bos_sayfa >= BOS_SAYFA_LIMITI:
-                        print(" -> Üst üste boş/hatalı sayfa, mağaza bitiriliyor.")
                         break
                     time.sleep(1)
                     continue
@@ -362,7 +402,7 @@ def main():
 
                 print(
                     f" -> Sayfa {sayfa}: class_kart={class_kart_sayisi}, "
-                    f"urun_link={link_sayisi}, benzersiz_aday={len(ogeler)}"
+                    f"urun_link={link_sayisi}, benzersiz={len(ogeler)}"
                 )
 
                 sayfa_urun_sayisi = 0
@@ -372,7 +412,7 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    liste_fiyat, sepette_fiyat, fiyat = urun_fiyati_bul(kart)
+                    liste_fiyat, sepette_fiyat, fiyat = urun_fiyati_bul(kart, link_tag)
                     if fiyat <= 0:
                         fiyatsiz_atilan += 1
                         continue
@@ -380,12 +420,19 @@ def main():
                     ad = urun_adi_bul(kart, link_tag)
                     kupon_metni = kupon_metni_bul(kart)
 
+                    # İlk sayfada birkaç örnek göster (kontrol için)
+                    if sayfa_urun_sayisi < 3 and sayfa == 1:
+                        print(
+                            f"    Örnek: {ad[:60]} | "
+                            f"liste={liste_fiyat} sepette={sepette_fiyat} "
+                            f"takip={fiyat}"
+                        )
+
                     gorulen_urunler.add(urun_id)
                     toplam_urun += 1
                     sayfa_urun_sayisi += 1
 
                     eski_kayit = eski_veriler.get(urun_id)
-
                     if isinstance(eski_kayit, dict):
                         eski_fiyat = eski_kayit.get("fiyat")
                         eski_kupon = eski_kayit.get("kupon_metni")
@@ -396,17 +443,12 @@ def main():
                         son_bildirim = None
 
                     try:
-                        eski_fiyat = (
-                            float(eski_fiyat) if eski_fiyat is not None else None
-                        )
+                        eski_fiyat = float(eski_fiyat) if eski_fiyat is not None else None
                     except (TypeError, ValueError):
                         eski_fiyat = None
-
                     try:
                         son_bildirim = (
-                            float(son_bildirim)
-                            if son_bildirim is not None
-                            else None
+                            float(son_bildirim) if son_bildirim is not None else None
                         )
                     except (TypeError, ValueError):
                         son_bildirim = None
@@ -414,12 +456,10 @@ def main():
                     esik = son_bildirim if son_bildirim is not None else eski_fiyat
                     yeni_son_bildirim = son_bildirim
 
-                    # --- FİYAT DÜŞÜŞÜ ---
                     if esik is not None and fiyat < esik:
                         if fiyat < (esik * 0.4):
                             print(
-                                f"Şüpheli düşüş (bildirim yok): {ad[:50]} | "
-                                f"{esik:.2f} -> {fiyat:.2f}"
+                                f"Şüpheli düşüş: {ad[:50]} | {esik:.2f} -> {fiyat:.2f}"
                             )
                         else:
                             fark = esik - fiyat
@@ -447,7 +487,6 @@ def main():
                             if telegram_mesaj_gonder(mesaj):
                                 yeni_son_bildirim = fiyat
 
-                    # --- YENİ KUPON ---
                     elif (not eski_kupon) and kupon_metni:
                         mesaj = (
                             f"🎟️ <b>YENİ KUPON!</b>\n\n"
@@ -460,7 +499,6 @@ def main():
                         )
                         telegram_mesaj_gonder(mesaj)
 
-                    # --- KUPON DEĞİŞTİ ---
                     elif eski_kupon and kupon_metni and eski_kupon != kupon_metni:
                         mesaj = (
                             f"🎟️ <b>KUPON GÜNCELLENDİ!</b>\n\n"
@@ -488,8 +526,7 @@ def main():
 
                 print(
                     f"    Eklenen: {sayfa_urun_sayisi} | "
-                    f"Fiyatsız atılan: {fiyatsiz_atilan} | "
-                    f"Mağaza toplam: {toplam_urun}"
+                    f"Fiyatsız: {fiyatsiz_atilan} | Toplam: {toplam_urun}"
                 )
 
                 if sayfa_urun_sayisi == 0:
