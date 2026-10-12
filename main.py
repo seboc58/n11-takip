@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -6,7 +5,7 @@ import re
 import logging
 import requests
 from html import escape
-from urllib.parse import urljoin, urlsplit, urlunsplit, unquote
+from urllib.parse import urljoin, urlsplit, urlunsplit
 from bs4 import BeautifulSoup
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -16,7 +15,6 @@ DATA_FILE = "fiyatlar.json"
 MIN_FIYAT = 1000.0
 MAX_FIYAT = 300000.0
 SAYFA_SAYISI = 6
-DETAY_SAYFASI_DOGRULA = True
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,7 +23,6 @@ logging.basicConfig(
 
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/arama?q=teknosa",
-    "n11": "https://www.n11.com/arama?q=n11",
     "Mediamarkt": "https://www.n11.com/arama?q=mediamarkt",
     "Braunshop": "https://www.n11.com/arama?q=braunshop",
     "Korayspor": "https://www.n11.com/arama?q=korayspor",
@@ -51,524 +48,79 @@ def telegram_mesaj_gonder(mesaj):
         logging.warning("Telegram token veya chat ID eksik.")
         return False
 
+    api_url = (
+        f"https://api.telegram.org/bot"
+        f"{TELEGRAM_TOKEN}/sendMessage"
+    )
+
     try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        response = requests.post(
+            api_url,
             data={
                 "chat_id": CHAT_ID,
                 "text": mesaj,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True
+                "parse_mode": "HTML"
             },
             timeout=15
         )
-        r.raise_for_status()
-        data = r.json()
-        if not data.get("ok"):
-            logging.error("Telegram API hatası: %s", data)
-        return bool(data.get("ok"))
-    except (requests.RequestException, ValueError) as e:
-        logging.error("Telegram gönderme hatası: %s", e)
+        response.raise_for_status()
+
+        sonuc = response.json()
+        if not sonuc.get("ok"):
+            logging.error("Telegram API hatası: %s", sonuc)
+            return False
+
+        return True
+
+    except (requests.RequestException, ValueError) as hata:
+        logging.error("Telegram gönderme hatası: %s", hata)
         return False
 
 
 def eski_fiyatlari_yukle():
     if not os.path.exists(DATA_FILE):
         return {}
+
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError) as e:
-        logging.error("Fiyat dosyası okunamadı: %s", e)
+            veri = json.load(f)
+
+        return veri if isinstance(veri, dict) else {}
+
+    except (OSError, json.JSONDecodeError) as hata:
+        logging.error("Fiyat dosyası okunamadı: %s", hata)
         return {}
 
 
-def yeni_fiyatlari_kaydet(data):
-    tmp = DATA_FILE + ".tmp"
+def yeni_fiyatlari_kaydet(veri):
+    gecici = DATA_FILE + ".tmp"
+
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        with open(gecici, "w", encoding="utf-8") as f:
+            json.dump(veri, f, ensure_ascii=False, indent=2)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, DATA_FILE)
+
+        os.replace(gecici, DATA_FILE)
         return True
-    except OSError as e:
-        logging.error("Fiyat dosyası kaydedilemedi: %s", e)
+
+    except OSError as hata:
+        logging.error("Fiyat dosyası kaydedilemedi: %s", hata)
         return False
 
 
-def metin_al(element):
-    if not element:
-        return ""
-    return " ".join(element.get_text(" ", strip=True).split())
-
-
-def fiyat_metnini_temizle(value):
-    if value is None:
+def fiyat_metnini_temizle(metin):
+    if not metin:
         return None
 
-    s = str(value).replace("\xa0", " ").strip()
+    metin = str(metin).replace("\xa0", " ").strip()
+
     if re.search(
-        r"taksit|aylık|ayda|başlayan|indirim oranı",
-        s, re.I
+        r"taksit|aylık|ayda|başlayan",
+        metin,
+        re.IGNORECASE
     ):
         return None
 
-    # Öncelikle para birimi ile yazılmış tutarı al.
-    m = re.search(
-        r"(?<!\d)(\d{1,3}(?:[.\s]\d{3})+|\d+)"
-        r"(?:,(\d{1,2}))?\s*(?:TL|TRY|₺)",
-        s, re.I
-    )
-
-    if not m:
-        # Yalnızca alanın kendisi sayıysa kabul et.
-        m = re.fullmatch(
-            r"\s*(\d{1,3}(?:[.\s]\d{3})+|\d+)"
-            r"(?:,(\d{1,2}))?\s*",
-            s
-        )
-        if not m:
-            return None
-
-    whole = m.group(1).replace(".", "").replace(" ", "")
-    decimal = m.group(2)
-    raw = whole + ("." + decimal if decimal else "")
-
-    try:
-        price = float(raw)
-    except ValueError:
-        return None
-
-    if MIN_FIYAT <= price <= MAX_FIYAT:
-        return round(price, 2)
-    return None
-
-
-def urun_url_temizle(url):
-    p = urlsplit(urljoin("https://www.n11.com/", url))
-    return urlunsplit((
-        p.scheme, p.netloc, p.path.rstrip("/"), "", ""
-    ))
-
-
-def urun_adi_gecerli(name):
-    if not name:
-        return False
-
-    name = re.sub(r"\s+", " ", str(name)).strip()
-    upper = name.upper()
-
-    if len(name) < 6 or len(name) > 300:
-        return False
-
-    invalid = [
-        "POPÜLER SAYFALAR", "POPULER SAYFALAR",
-        "ÜRÜN ADI BULUNAMADI", "SEPETE EKLE",
-        "HEMEN AL", "ÜRÜNÜ İNCELE", "ÜCRETSİZ KARGO",
-        "FIRSAT ÜRÜNLERİ", "ÇOK SATANLAR", "GİRİŞ YAP"
-    ]
-
-    if any(x in upper for x in invalid):
-        return False
-
-    if re.fullmatch(r"[\d.,\s₺€$]+", name):
-        return False
-
-    if re.search(r"\b(TL|TRY|USD|EUR)\b|₺|€|\$", name, re.I):
-        return False
-
-    return True
-
-
-def url_slug_adi(url):
-    path = unquote(urlsplit(url).path)
-    slug = path.rstrip("/").split("/")[-1]
-    slug = re.sub(r"-\d+$", "", slug)
-    return re.sub(r"-+", " ", slug).strip()
-
-
-def urun_adi_bul(kart, link, url):
-    for attr in ("data-product-name", "title", "aria-label"):
-        name = link.get(attr, "")
-        if urun_adi_gecerli(name):
-            return re.sub(r"\s+", " ", name).strip()[:180]
-
-    selectors = [
-        "[itemprop='name']",
-        "[data-testid*='product-name']",
-        "[data-testid*='product-title']",
-        "[class*='productName']",
-        "[class*='product-name']",
-        "[class*='productTitle']",
-        "[class*='product-title']",
-        "[class*='proName']",
-        "[class*='prdName']"
-    ]
-
-    for selector in selectors:
-        for el in kart.select(selector):
-            name = (
-                el.get("content")
-                or el.get("title")
-                or metin_al(el)
-            )
-            if urun_adi_gecerli(name):
-                return re.sub(r"\s+", " ", name).strip()[:180]
-
-    for img in kart.find_all("img"):
-        name = img.get("alt", "")
-        if urun_adi_gecerli(name):
-            return re.sub(r"\s+", " ", name).strip()[:180]
-
-    for el in kart.select("h1, h2, h3"):
-        name = metin_al(el)
-        if urun_adi_gecerli(name):
-            return name[:180]
-
-    slug = url_slug_adi(url)
-    return slug if urun_adi_gecerli(slug) else None
-
-
-def kartlari_bul(soup):
-    links = soup.select('a[href*="/urun/"]')
-    results = []
-    seen = set()
-
-    for link in links:
-        url = urun_url_temizle(link.get("href", ""))
-        if url in seen:
-            continue
-        seen.add(url)
-
-        # Ürün bağlantısını içeren en yakın kapsayıcı.
-        candidate = link
-        for parent in link.parents:
-            if getattr(parent, "name", None) in ("body", "html"):
-                break
-            text = metin_al(parent)
-            if len(text) <= 1600 and parent.find(
-                "a", href=re.compile(r"/urun/")
-            ):
-                candidate = parent
-                break
-
-        results.append((candidate, link, url))
-
-    return results
-
-
-def sepet_fiyati_bul(container):
-    candidates = []
-
-    for el in container.find_all(
-        ["span", "div", "p", "strong", "b", "ins"]
-    ):
-        text = metin_al(el)
-
-        if len(text) > 180:
-            continue
-
-        if not re.search(
-            r"sepette|sepet fiyatı|sepete özel",
-            text, re.I
-        ):
-            continue
-
-        price = fiyat_metnini_temizle(text)
-        if price is not None:
-            candidates.append((len(text), price))
-
-    if candidates:
-        candidates.sort(key=lambda x: x[0])
-        return candidates[0][1]
-
-    return None
-
-
-def normal_fiyati_bul(container):
-    candidates = []
-
-    for el in container.find_all(
-        ["ins", "span", "div", "p", "strong", "b"]
-    ):
-        classes = " ".join(el.get("class", []))
-        itemprop = el.get("itemprop", "")
-        text = metin_al(el)
-
-        if len(text) > 100:
-            continue
-
-        if re.search(
-            r"sepette|sepet fiyatı|kupon|taksit|indirim oranı",
-            text, re.I
-        ):
-            continue
-
-        if not (
-            re.search(
-                r"price|fiyat|amount|sale|current|newprice",
-                classes, re.I
-            )
-            or itemprop == "price"
-        ):
-            continue
-
-        raw = el.get("content") or text
-        price = fiyat_metnini_temizle(raw)
-
-        if price is not None:
-            candidates.append((len(text), price))
-
-    if candidates:
-        candidates.sort(key=lambda x: x[0])
-        return candidates[0][1]
-
-    return None
-
-
-def jsonld_urun_verisi(soup):
-    names = []
-    prices = []
-
-    for script in soup.select('script[type="application/ld+json"]'):
-        try:
-            data = json.loads(script.string or script.get_text())
-        except (ValueError, TypeError):
-            continue
-
-        stack = data if isinstance(data, list) else [data]
-
-        while stack:
-            obj = stack.pop()
-
-            if isinstance(obj, list):
-                stack.extend(obj)
-                continue
-
-            if not isinstance(obj, dict):
-                continue
-
-            if isinstance(obj.get("@graph"), list):
-                stack.extend(obj["@graph"])
-
-            typ = obj.get("@type", "")
-            if isinstance(typ, list):
-                typ = " ".join(typ)
-
-            if "Product" not in str(typ):
-                continue
-
-            name = obj.get("name")
-            if urun_adi_gecerli(name):
-                names.append(name.strip())
-
-            offers = obj.get("offers", [])
-            offers = offers if isinstance(offers, list) else [offers]
-
-            for offer in offers:
-                if not isinstance(offer, dict):
-                    continue
-
-                raw = offer.get("price") or offer.get("lowPrice")
-                if raw is not None:
-                    price = fiyat_metnini_temizle(str(raw))
-                    if price is not None:
-                        prices.append(price)
-
-    return names, prices
-
-
-def detay_sayfasi_dogrula(url):
-    try:
-        response = SESSION.get(url, timeout=25)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-    except requests.RequestException as e:
-        logging.warning("Detay sayfası açılamadı: %s (%s)", url, e)
-        return None, None
-
-    names, prices = jsonld_urun_verisi(soup)
-
-    h1 = soup.select_one("h1")
-    title = metin_al(h1) if h1 else None
-
-    if not urun_adi_gecerli(title):
-        title = names[0] if names else None
-
-    # URL ile başlık belirgin şekilde uyuşmuyorsa fiyatı reddet.
-    slug_words = set(re.findall(r"[a-z0-9]+", url_slug_adi(url).lower()))
-    title_words = set(re.findall(r"[a-z0-9]+", (title or "").lower()))
-    meaningful = {w for w in slug_words if len(w) > 2}
-
-    if meaningful and title_words:
-        overlap = len(meaningful & title_words) / len(meaningful)
-        if overlap < 0.35:
-            logging.warning("Ürün adı/URL uyuşmuyor: %s", url)
-            return None, None
-
-    basket_price = sepet_fiyati_bul(soup)
-    if basket_price is not None:
-        return title, basket_price
-
-    # Güvenilir Product verisi yoksa sayfa genelinden rastgele fiyat alma.
-    if prices:
-        return title, min(prices)
-
-    logging.warning("Detay sayfasında yapılandırılmış fiyat yok: %s", url)
-    return title, None
-
-
-def onceki_kaydi_bul(data, url):
-    old = data.get(url)
-    return old if isinstance(old, dict) else {}
-
-
-def main():
-    logging.info("Fiyat taraması başladı.")
-
-    eski = eski_fiyatlari_yukle()
-    guncel = dict(eski)
-
-    for magaza, base_url in MAGAZALAR.items():
-        logging.info("[%s] taranıyor.", magaza)
-        gorulen = set()
-        toplam = 0
-
-        for sayfa in range(1, SAYFA_SAYISI + 1):
-            url = f"{base_url}&pg={sayfa}"
-
-            try:
-                response = SESSION.get(url, timeout=30)
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, "html.parser")
-                cards = kartlari_bul(soup)
-
-                if not cards:
-                    logging.warning(
-                        "%s sayfa %s: ürün bulunamadı.",
-                        magaza, sayfa
-                    )
-                    time.sleep(1)
-                    continue
-
-                for kart, link, product_url in cards:
-                    if product_url in gorulen:
-                        continue
-                    gorulen.add(product_url)
-
-                    old_record = onceki_kaydi_bul(eski, product_url)
-                    name = urun_adi_bul(kart, link, product_url)
-
-                    price = sepet_fiyati_bul(kart)
-                    is_basket = price is not None
-
-                    if price is None:
-                        price = normal_fiyati_bul(kart)
-
-                    # Detay sayfası doğrulaması her ürün için yapılır.
-                    detail_name, detail_price = detay_sayfasi_dogrula(
-                        product_url
-                    )
-
-                    if detail_name and urun_adi_gecerli(detail_name):
-                        name = detail_name
-
-                    # Detay fiyatı doğrulanmışsa onu kullan.
-                    if detail_price is not None:
-                        price = detail_price
-                        is_basket = False
-
-                    if not urun_adi_gecerli(name):
-                        old_name = old_record.get("urun_adi", "")
-                        name = (
-                            old_name
-                            if urun_adi_gecerli(old_name)
-                            else None
-                        )
-
-                    if not name or price is None:
-                        logging.warning(
-                            "Ad/fiyat doğrulanamadı, kayıt atlandı: %s",
-                            product_url
-                        )
-                        continue
-
-                    try:
-                        old_price = float(old_record.get("fiyat"))
-                    except (TypeError, ValueError):
-                        old_price = None
-
-                    # %60'tan büyük ani düşüşü otomatik kabul etme.
-                    if (
-                        old_price
-                        and price < old_price
-                        and (old_price - price) / old_price > 0.60
-                    ):
-                        logging.warning(
-                            "Şüpheli fiyat düşüşü; bildirim ve kayıt atlandı: "
-                            "%s | %.2f -> %.2f",
-                            name, old_price, price
-                        )
-                        continue
-
-                    if old_price and price < old_price:
-                        difference = old_price - price
-                        drop = difference / old_price
-
-                        if difference >= 1:
-                            basket_note = (
-                                "\n🎟️ <i>Sepette indirimli fiyat</i>"
-                                if is_basket else ""
-                            )
-
-                            message = (
-                                f"🔥 <b>FİYAT DÜŞTÜ!</b>{basket_note}\n\n"
-                                f"🏷️ <b>Ürün:</b> {escape(name)}\n"
-                                f"🏪 <b>Arama:</b> {escape(magaza)}\n"
-                                f"📉 <b>Eski:</b> {old_price:.2f} TL\n"
-                                f"💰 <b>Yeni:</b> {price:.2f} TL\n"
-                                f"✅ <b>İndirim:</b> %{drop * 100:.1f}\n"
-                                f"💵 <b>Fark:</b> {difference:.2f} TL\n\n"
-                                f'<a href="{escape(product_url, quote=True)}">'
-                                f"Ürüne Git</a>"
-                            )
-                            telegram_mesaj_gonder(message)
-
-                    guncel[product_url] = {
-                        "fiyat": price,
-                        "urun_adi": name,
-                        "arama_grubu": magaza,
-                        "url": product_url,
-                        "son_guncelleme": time.strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
-                    }
-
-                    toplam += 1
-
-                logging.info(
-                    "%s sayfa %s işlendi; toplam %s ürün.",
-                    magaza, sayfa, toplam
-                )
-                time.sleep(1)
-
-            except requests.RequestException as e:
-                logging.error(
-                    "%s sayfa %s hatası: %s", magaza, sayfa, e
-                )
-                time.sleep(1)
-
-        logging.info("%s tamamlandı: %s ürün.", magaza, toplam)
-
-    if yeni_fiyatlari_kaydet(guncel):
-        logging.info(
-            "Tarama tamamlandı. Kayıt sayısı: %s", len(guncel)
-        )
-    else:
-        logging.error("Fiyatlar dosyaya kaydedilemedi.")
-
-
-if __name__ == "__main__":
-    main()
+    # Türkçe fiyat: 4.299,90 / 4299,90 / 4.299
+    eslesme =
