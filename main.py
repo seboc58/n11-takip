@@ -18,6 +18,8 @@ BOS_SAYFA_LIMITI = 2  # üst üste bu kadar boş sayfa gelirse mağazayı bitir
 
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/arama?q=teknosa",
+    "n11": "https://www.n11.com/arama?q=n11",
+    "Jack&Jones": "https://www.n11.com/arama?q=jack-jones",
     "Mediamarkt": "https://www.n11.com/arama?q=mediamarkt",
     "Braunshop": "https://www.n11.com/arama?q=braunshop",
     "Korayspor": "https://www.n11.com/arama?q=korayspor",
