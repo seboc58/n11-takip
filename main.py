@@ -20,6 +20,7 @@ MAGAZALAR = {
     "N11": "https://www.n11.com/arama?q=n11",
     "Mediamarkt": "https://www.n11.com/arama?q=mediamarkt",
     "Braunshop": "https://www.n11.com/arama?q=braunshop",
+    "Jack&Jones": "https://www.n11.com/arama?q=jack-jones",
     "Korayspor": "https://www.n11.com/arama?q=korayspor",
     "Skechers": "https://www.n11.com/arama?q=skechers",
     "Karaca": "https://www.n11.com/arama?q=karaca",
