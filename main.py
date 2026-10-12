@@ -200,97 +200,57 @@ def _satici_temizle(deger):
     return None
 
 
-def _satici_aday_ekle(adaylar, deger):
-    """HTML'den bulunan satıcı adını aday listesine güvenli biçimde ekler."""
-    t = _satici_temizle(deger)
-    if not t:
-        return
-    # Fiyat, genel arayüz metni veya çok uzun açıklamaları satıcı kabul etme.
-    if re.search(r"\b(TL|₺|kargo|teslimat|puan|yorum|satış|indirim)\b", t, re.I):
-        return
-    if len(t) > 60:
-        return
-    adaylar.append(t)
-
-
 def satici_adi_bul(kart, link_tag=None):
-    """Arama kartında varsa mağaza bağlantısı, sınıfı ve data-* alanlarını tara."""
     adaylar = []
-    kok = kart if kart is not None else link_tag
 
     if link_tag is not None:
         href = link_tag.get("href") or ""
-        m = re.search(r"[?&](?:magaza|seller|sellerName|store|merchant)=([^&#]+)", href, re.I)
+        m = re.search(r"[?&]magaza=([^&]+)", href, re.I)
         if m:
-            _satici_aday_ekle(adaylar, m.group(1))
+            t = _satici_temizle(m.group(1))
+            if t:
+                adaylar.append(t)
 
+    kok = kart if kart is not None else link_tag
     if kok is not None:
         for a in kok.find_all("a", href=True):
             href = a.get("href") or ""
-            # URL'deki mağaza adı / mağaza bağlantısı
-            m = re.search(r"/magaza/([^/?#]+)", href, re.I)
+            href_l = href.lower()
+
+            m = re.search(r"[?&]magaza=([^&]+)", href, re.I)
             if m:
-                _satici_aday_ekle(adaylar, m.group(1))
-            for m in re.finditer(r"[?&](?:magaza|sellerName|storeName|merchantName)=([^&#]+)", href, re.I):
-                _satici_aday_ekle(adaylar, m.group(1))
-            if re.search(r"/magaza/|seller|merchant|store", href, re.I):
-                _satici_aday_ekle(adaylar, metin_al(a))
+                t = _satici_temizle(m.group(1))
+                if t:
+                    adaylar.append(t)
 
-        # N11'in değişebilen class/id/data-testid alanlarını tara.
-        for el in kok.find_all(True):
-            attrs = el.attrs or {}
-            tanim = " ".join(str(attrs.get(k, "")) for k in ("class", "id", "data-testid", "data-qa", "aria-label"))
-            if re.search(r"seller|satici|satıcı|magaza|mağaza|merchant|store-name|shop-name", tanim, re.I):
-                _satici_aday_ekle(adaylar, metin_al(el))
-            for key, val in attrs.items():
-                if re.search(r"seller|merchant|store|magaza|satici", str(key), re.I):
-                    if isinstance(val, (str, int, float)):
-                        _satici_aday_ekle(adaylar, val)
+            m = re.search(r"/magaza/([^/?#]+)", href_l)
+            if m:
+                t = _satici_temizle(m.group(1))
+                if t:
+                    adaylar.append(t)
 
-    # En kısa aday çoğunlukla iç içe geçmiş aynı satıcı etiketidir.
-    uniq = list({a.casefold(): a for a in adaylar}.values())
+            if "/magaza/" in href_l or "magaza=" in href_l:
+                t = _satici_temizle(metin_al(a))
+                if t:
+                    adaylar.append(t)
+
+        for el in kok.find_all(
+            ["a", "span", "div", "p"],
+            class_=re.compile(
+                r"(seller|satici|store|magaza|shop|merchant|vendor|sellerName)",
+                re.I,
+            ),
+        ):
+            t = _satici_temizle(metin_al(el))
+            if t:
+                adaylar.append(t)
+
+    if not adaylar:
+        return None
+
+    uniq = list({a.lower(): a for a in adaylar}.values())
     uniq.sort(key=len)
-    return uniq[0][:80] if uniq else None
-
-
-_SATICI_DETAY_CACHE = {}
-
-
-def urun_sayfasindan_satici_bul(url, headers):
-    """Kartta satıcı görünmüyorsa ürün detay sayfasından satıcıyı doğrulamayı dene."""
-    if url in _SATICI_DETAY_CACHE:
-        return _SATICI_DETAY_CACHE[url]
-
-    satici = None
-    try:
-        r = requests.get(url, headers=headers, timeout=15)
-        if r.status_code == 200 and "text/html" in r.headers.get("Content-Type", "text/html"):
-            soup = BeautifulSoup(r.text, "html.parser")
-            satici = satici_adi_bul(soup, None)
-
-            # Sayfanın gömülü JSON verilerinde satıcı adı bulunabiliyor.
-            if not satici:
-                for script in soup.find_all("script"):
-                    raw = script.string or script.get_text(" ", strip=True)
-                    if not raw or len(raw) > 2_000_000:
-                        continue
-                    for pattern in (
-                        r'"(?:sellerName|seller_name|merchantName|storeName|shopName)"\s*:\s*"([^"\\]{2,80})"',
-                        r"'(?:sellerName|seller_name|merchantName|storeName|shopName)'\s*:\s*'([^'\\]{2,80})'",
-                    ):
-                        m = re.search(pattern, raw, re.I)
-                        if m:
-                            aday = _satici_temizle(m.group(1))
-                            if aday:
-                                satici = aday
-                                break
-                    if satici:
-                        break
-    except requests.RequestException as e:
-        print(f"    Ürün sayfası satıcı kontrolü başarısız: {url} ({e})")
-
-    _SATICI_DETAY_CACHE[url] = satici
-    return satici
+    return uniq[0][:80]
 
 
 def satici_eslesiyor_mu(magaza_adi, satici):
@@ -465,7 +425,7 @@ def main():
         f"Ayarlar: MIN_FIYAT={MIN_FIYAT}, SAYFA_SAYISI={SAYFA_SAYISI}, "
         f"BOS_SAYFA_LIMITI={BOS_SAYFA_LIMITI}"
     )
-    print("Filtre: Satıcı karttan okunur; bulunamazsa ürün detay sayfasından doğrulanır. Doğrulanamayan satıcı elenir.")
+    print("Filtre: SATICI ZORUNLU — eşleşmeyen / bilinmeyen satıcı elenir")
 
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
@@ -525,14 +485,7 @@ def main():
 
                     satici = satici_adi_bul(kart, link_tag)
                     if not satici_eslesiyor_mu(magaza_adi, satici):
-                        # Arama kartında satıcı alanı yoksa ürün sayfasında kontrol et.
-                        satici_detay = urun_sayfasindan_satici_bul(urun_id, headers)
-                        if satici_detay:
-                            satici = satici_detay
-                    if not satici_eslesiyor_mu(magaza_adi, satici):
                         yanlis_satici += 1
-                        if sayfa == 1 and yanlis_satici <= 3:
-                            print(f"    Satıcı eşleşmedi: {urun_id} | bulunan={satici!r}")
                         continue
 
                     ad = urun_adi_bul(kart, link_tag)
