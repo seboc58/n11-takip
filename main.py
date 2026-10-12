@@ -63,7 +63,7 @@ def fiyat_metnini_temizle(metin):
 
         val = float(raw_val)
         
-        # 1.000 TL ile 300.000 TL arasındaki gerçek büyük ürün fiyatlarını kabul et
+        # 1.000 TL ile 300.000 TL arasındaki ürünleri kabul et
         if 1000.0 <= val <= 300000.0:
             return val
             
@@ -72,7 +72,7 @@ def fiyat_metnini_temizle(metin):
         return 0.0
 
 def main():
-    print("Esnek ve Kesin Ürün Fiyat Taraması Başlatılıyor...")
+    print("Kupon ve İndirim Destekli Tarama Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -118,28 +118,33 @@ def main():
                     if urun_id in gorulen_urunler:
                         continue
 
-                    # Kart içindeki tüm olası fiyat içeren alanları ve metinleri tara
-                    fiyat_adaylari = kart.find_all(["ins", "span", "div", "p"], class_=re.compile(r'(price|fiyat|new|amount|value)', re.I))
-                    if not fiyat_adaylari:
-                        fiyat_adaylari = kart.find_all(text=re.compile(r'TL|₺'))
+                    # 1. Öncelik: Kuponlu / Sepette İndirimli Özel Alanlar
+                    kupon_tag = kart.find(["span", "div", "p"], class_=re.compile(r'(coupon|kupon|basket|sepette)', re.I))
+                    
+                    fiyat = 0.0
+                    kuponlu_fiyat_mi = False
 
-                    bulunan_fiyat = 0.0
-                    for aday in fiyat_adaylari:
-                        metin = aday.get_text() if hasattr(aday, 'get_text') else str(aday)
-                        
-                        # Taksit veya vade geçenleri eliyoruz
-                        if any(kelime in metin.lower() for kelime in ['taksit', 'ay', 'başlayan', 'seçeneği']):
-                            continue
+                    if kupon_tag:
+                        m = kupon_tag.get_text()
+                        if not any(k in m.lower() for k in ['taksit', 'ay', 'başlayan']):
+                            fiyat = fiyat_metnini_temizle(m)
+                            if fiyat > 0:
+                                kuponlu_fiyat_mi = True
 
-                        temiz_fiyat = fiyat_metnini_temizle(metin)
-                        if temiz_fiyat > 0:
-                            bulunan_fiyat = temiz_fiyat
-                            break  # İlk geçerli ve mantıklı fiyatı al ve dur
+                    # 2. Eğer Kuponlu Fiyat Yoksa Ana Satış Fiyatını Al
+                    if fiyat <= 0:
+                        fiyat_adaylari = kart.find_all(["ins", "span", "div"], class_=re.compile(r'(price|fiyat|newPrice)', re.I))
+                        for aday in fiyat_adaylari:
+                            metin = aday.get_text()
+                            if any(k in metin.lower() for k in ['taksit', 'ay', 'başlayan']):
+                                continue
+                            temiz = fiyat_metnini_temizle(metin)
+                            if temiz > 0:
+                                fiyat = temiz
+                                break
 
-                    if bulunan_fiyat <= 0:
+                    if fiyat <= 0:
                         continue
-
-                    fiyat = bulunan_fiyat
 
                     gorulen_urunler.add(urun_id)
                     toplam_urun += 1
@@ -147,12 +152,15 @@ def main():
 
                     eski_fiyat = eski_veriler.get(urun_id)
                     if eski_fiyat is not None and fiyat < eski_fiyat:
+                        # %60'tan fazla anormal düşüşleri koru
                         if fiyat < (eski_fiyat * 0.4):
                             guncel_veriler[str(urun_id)] = eski_fiyat
                             continue
 
+                        kupon_notu = " 🎟️ <i>(Kuponlu / Sepet İndirimli)</i>" if kuponlu_fiyat_mi else ""
+
                         mesaj = (
-                            f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
+                            f"🔥 <b>FİYAT DÜŞTÜ!</b>{kupon_notu}\n\n"
                             f"🏪 <b>Mağaza:</b> {magaza_adi}\n"
                             f"📉 <b>Eski Fiyat:</b> {eski_fiyat:.2f} TL\n"
                             f"🏷️ <b>Yeni Fiyat:</b> {fiyat:.2f} TL\n\n"
