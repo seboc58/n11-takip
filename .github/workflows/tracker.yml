@@ -5,6 +5,11 @@ on:
     - cron: '*/45 * * * *'
   workflow_dispatch:
 
+# Aynı anda birden fazla bot çalışmasını engelleyen kilit mekanizması
+concurrency:
+  group: n11-bot-run
+  cancel-in-progress: false
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -29,11 +34,14 @@ jobs:
         run: |
           python main.py
 
-      - name: Fiyat Hafızasını Kaydet
+      - name: Fiyat Hafızasını Kaydet ve Gönder
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          # Önce uzaktaki güncellemeleri alıp çakışmayı önlüyoruz
+          git pull origin main --rebase || echo "Rebase atlandı"
+          
           git add fiyatlar.json
           git commit -m "Fiyat hafızası güncellendi" || echo "Değişiklik yok"
-          git pull origin main --rebase
           git push origin main
