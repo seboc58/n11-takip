@@ -30,25 +30,21 @@ MAGAZALAR = {
 
 def telegram_mesaj_gonder(mesaj):
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("Telegram gönderilemedi: TELEGRAM_TOKEN veya CHAT_ID eksik.")
         return False
     try:
         api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         r = requests.post(
             api_url,
-            data={"chat_id": CHAT_ID, "text": mesaj, "parse_mode": "HTML"},
-            timeout=15,
+            data={
+                "chat_id": CHAT_ID,
+                "text": mesaj,
+                "parse_mode": "HTML",
+            },
+            timeout=10,
         )
-        if not r.ok:
-            print(f"Telegram HTTP hatası: {r.status_code} - {r.text[:300]}")
-            return False
-        try:
-            sonuc = r.json()
-            return bool(sonuc.get("ok"))
-        except Exception:
-            return True
+        return r.ok
     except Exception as e:
-        print(f"Telegram gönderme hatası: {e}")
+        print(f"Telegram gönderme hatasi: {e}")
         return False
 
 
@@ -71,7 +67,6 @@ def yeni_fiyatlari_kaydet(veri):
             f.flush()
             os.fsync(f.fileno())
         os.replace(gecici, DATA_FILE)
-        print(f"Fiyat hafızası kaydedildi: {len(veri)} ürün.")
     except Exception as e:
         print(f"Fiyat dosyası kaydedilemedi: {e}")
 
@@ -81,6 +76,7 @@ def fiyat_metnini_temizle(metin):
         return 0.0
 
     metin = str(metin).replace("\xa0", " ").strip()
+
     if re.search(r"taksit|aylık|ayda|başlayan|seçeneği", metin, re.I):
         return 0.0
 
@@ -92,18 +88,25 @@ def fiyat_metnini_temizle(metin):
         return 0.0
 
     raw_val = match.group(0).replace(" ", "")
+
     try:
         if "," in raw_val:
             raw_val = raw_val.replace(".", "").replace(",", ".")
         elif "." in raw_val and len(raw_val.rsplit(".", 1)[-1]) == 3:
             raw_val = raw_val.replace(".", "")
+
         val = float(raw_val)
-        return round(val, 2) if MIN_FIYAT <= val <= MAX_FIYAT else 0.0
+
+        if MIN_FIYAT <= val <= MAX_FIYAT:
+            return round(val, 2)
+
+        return 0.0
     except Exception:
         return 0.0
 
 
 def urun_url_temizle(url):
+    """Her zaman aynı formata getir: full URL, query yok, trailing slash yok."""
     url = urljoin("https://www.n11.com/", url)
     p = urlsplit(url)
     return urlunsplit((p.scheme, p.netloc, p.path.rstrip("/"), "", ""))
@@ -115,50 +118,27 @@ def metin_al(element):
     return " ".join(element.get_text(" ", strip=True).split())
 
 
-def urun_adi_gecerli_mi(ad):
-    ad = (ad or "").strip()
-    if len(ad) < 4:
-        return False
-    # Başlık alanına fiyat metni geldiyse bunu ürün adı kabul etme.
-    if re.fullmatch(r"[\d.,\s]+\s*(?:TL|₺)", ad, re.I):
-        return False
-    if re.fullmatch(r"(?:TL|₺)?\s*[\d.,\s]+", ad, re.I):
-        return False
-    return bool(re.search(r"[A-Za-zÇĞİÖŞÜçğıöşü]", ad))
+def urun_adi_bul(kart, link_tag):
+    for etiket in ("h3", "h2"):
+        el = kart.find(etiket)
+        ad = metin_al(el)
+        if len(ad) > 3:
+            return ad[:180]
 
-
-def urun_adi_bul(kart, link_tag, urun_url=""):
-    for etiket in ("h3", "h2", "h4"):
-        for el in kart.find_all(etiket):
-            ad = metin_al(el)
-            if urun_adi_gecerli_mi(ad):
-                return ad[:180]
-
-    title = (link_tag.get("title") or "").strip()
-    if urun_adi_gecerli_mi(title):
-        return title[:180]
+    if link_tag.get("title"):
+        return link_tag["title"].strip()[:180]
 
     img = kart.find("img", alt=True)
-    if img:
-        alt = (img.get("alt") or "").strip()
-        if urun_adi_gecerli_mi(alt):
-            return alt[:180]
+    if img and img.get("alt", "").strip():
+        return img["alt"].strip()[:180]
 
-    link_text = metin_al(link_tag)
-    if urun_adi_gecerli_mi(link_text):
-        return link_text[:180]
-
-    # Son çare: ürün URL'sindeki slug'dan okunabilir bir ad üret.
-    slug = urlsplit(urun_url or link_tag.get("href", "")).path.rstrip("/").split("/")[-1]
-    slug = re.sub(r"-\d+$", "", slug)
-    slug = re.sub(r"[-_]+", " ", slug).strip()
-    if slug:
-        return slug[:180].title()
-    return "Ürün"
+    return metin_al(link_tag)[:180] or "Ürün"
 
 
 def kupon_metni_bul(kart):
+    """Karttaki kupon / sepette / kampanya metnini çıkarır."""
     adaylar = []
+
     for el in kart.find_all(
         ["span", "div", "p", "em", "strong"],
         class_=re.compile(
@@ -183,14 +163,20 @@ def kupon_metni_bul(kart):
 
     if not adaylar:
         return None
+
     adaylar = sorted(set(adaylar), key=len)
     return adaylar[0][:120]
 
 
 def urun_fiyati_bul(kart):
+    """
+    Liste fiyatı + sepette fiyatı ayrı bulur.
+    Takip için: sepette varsa onu, yoksa liste fiyatını kullanır.
+    """
     liste_fiyat = 0.0
     sepette_fiyat = 0.0
 
+    # 1) Normal fiyat alanları
     alanlar = kart.find_all(
         ["ins", "span", "div", "p"],
         class_=re.compile(r"(price|fiyat|newPrice|salePrice|currentPrice|new|amount|value)", re.I),
@@ -199,21 +185,20 @@ def urun_fiyati_bul(kart):
         metin = metin_al(alan)
         if re.search(r"sepette|sepet fiyat", metin, re.I):
             continue
-        if re.search(r"taksit|aylık|ayda|başlayan|seçeneği", metin, re.I):
+        if any(k in metin.lower() for k in ("taksit", "aylık", "ayda", "başlayan", "seçeneği")):
             continue
         f = fiyat_metnini_temizle(metin)
         if f > 0:
             liste_fiyat = f
             break
 
+    # 2) Sepette / kupon fiyatı
     alanlar = kart.find_all(
         ["span", "div", "p", "ins"],
         class_=re.compile(r"(coupon|kupon|basket|sepette|discount|indirim|campaign)", re.I),
     )
     for alan in alanlar:
         metin = metin_al(alan)
-        if not re.search(r"sepette|sepet fiyat|kupon", metin, re.I):
-            continue
         f = fiyat_metnini_temizle(metin)
         if f > 0:
             sepette_fiyat = f
@@ -229,16 +214,17 @@ def urun_fiyati_bul(kart):
         if m:
             sepette_fiyat = fiyat_metnini_temizle(m.group(0))
 
-    if liste_fiyat <= 0:
+    # Class tutmazsa genel adaylar
+    if liste_fiyat <= 0 and sepette_fiyat <= 0:
         adaylar = kart.find_all(
             ["ins", "span", "div", "p"],
-            class_=re.compile(r"(price|fiyat|newPrice|salePrice|currentPrice|amount|value)", re.I),
+            class_=re.compile(r"(price|fiyat|new|amount|value)", re.I),
         )
         if not adaylar:
             adaylar = kart.find_all(string=re.compile(r"TL|₺"))
         for aday in adaylar:
-            metin = aday.get_text(" ", strip=True) if hasattr(aday, "get_text") else str(aday)
-            if re.search(r"sepette|sepet fiyat|taksit|aylık|ayda|başlayan|seçeneği", metin, re.I):
+            metin = aday.get_text() if hasattr(aday, "get_text") else str(aday)
+            if any(k in metin.lower() for k in ("taksit", "aylık", "ayda", "başlayan", "seçeneği")):
                 continue
             f = fiyat_metnini_temizle(metin)
             if f > 0:
@@ -249,55 +235,8 @@ def urun_fiyati_bul(kart):
     return liste_fiyat, sepette_fiyat, fiyat
 
 
-def urun_karti_ve_linkleri_bul(soup):
-    """Her ürün URL'sini kendi en yakın ürün kartıyla eşleştir; üst kapsayıcıyı ürün kartı sanma."""
-    sonuc = []
-    eklenen = set()
-
-    for link in soup.find_all("a", href=True):
-        ham_link = link.get("href", "")
-        if "/urun/" not in ham_link:
-            continue
-
-        urun_id = urun_url_temizle(ham_link)
-        if urun_id in eklenen:
-            continue
-
-        kart = None
-        for parent in link.parents:
-            if getattr(parent, "name", None) not in ("li", "div", "article"):
-                continue
-            classes = " ".join(parent.get("class", []))
-            if re.search(r"(product|column|pro|item)", classes, re.I):
-                # En yakın eşleşen kapsayıcıyı al.
-                kart = parent
-                break
-
-        if kart is None:
-            kart = link.parent
-        if kart is None:
-            continue
-
-        # Seçilen kart başka bir ürünün bağlantısını önce içeriyorsa yanlış eşleşmeyi önle.
-        kart_linkleri = [
-            a for a in kart.find_all("a", href=True)
-            if "/urun/" in a.get("href", "")
-        ]
-        if kart_linkleri:
-            ilk_url = urun_url_temizle(kart_linkleri[0]["href"])
-            if ilk_url != urun_id:
-                # Daha yakın bir kart bulmak için ebeveyn zincirinde yukarı gitmeden
-                # bu bağlantıyı atlama; her bağlantı kendi kartıyla ayrı işlenebilir.
-                pass
-
-        eklenen.add(urun_id)
-        sonuc.append((kart, link, urun_id))
-
-    return sonuc
-
-
 def main():
-    print("N11 fiyat ve kupon taraması başlatılıyor...")
+    print("Esnek ve Kesin Ürün Fiyat Taraması Başlatılıyor...")
     eski_veriler = eski_fiyatlari_yukle()
     guncel_veriler = dict(eski_veriler)
 
@@ -312,16 +251,14 @@ def main():
         "Referer": "https://www.n11.com/",
     }
 
-    # Aynı ürün farklı arama gruplarında görünürse aynı çalıştırmada ikinci kez
-    # bildirim üretmesini önleyen global küme.
-    islenen_urunler = set()
-
     for magaza_adi, base_url in MAGAZALAR.items():
         print(f"\n[{magaza_adi}] taranıyor...")
+        gorulen_urunler = set()
         toplam_urun = 0
 
         for sayfa in range(1, SAYFA_SAYISI + 1):
             url = f"{base_url}&pg={sayfa}"
+
             try:
                 response = requests.get(url, headers=headers, timeout=30)
                 if response.status_code != 200:
@@ -330,26 +267,42 @@ def main():
                     continue
 
                 soup = BeautifulSoup(response.text, "html.parser")
-                urunler = urun_karti_ve_linkleri_bul(soup)
+                urun_kartlari = soup.find_all(
+                    ["li", "div"],
+                    class_=re.compile(r"(column|pro|product)", re.I),
+                )
+                if not urun_kartlari:
+                    urun_kartlari = soup.find_all("li")
+
                 sayfa_urun_sayisi = 0
 
-                for kart, link_tag, urun_id in urunler:
-                    if urun_id in islenen_urunler:
+                for kart in urun_kartlari:
+                    link_tag = kart.find("a", href=True)
+                    if not link_tag:
+                        continue
+
+                    ham_link = link_tag["href"]
+                    if "/urun/" not in ham_link:
+                        continue
+
+                    urun_id = urun_url_temizle(ham_link)
+                    if urun_id in gorulen_urunler:
                         continue
 
                     liste_fiyat, sepette_fiyat, fiyat = urun_fiyati_bul(kart)
                     if fiyat <= 0:
                         continue
 
-                    ad = urun_adi_bul(kart, link_tag, urun_id)
+                    ad = urun_adi_bul(kart, link_tag)
                     kupon_metni = kupon_metni_bul(kart)
 
-                    islenen_urunler.add(urun_id)
+                    gorulen_urunler.add(urun_id)
                     toplam_urun += 1
                     sayfa_urun_sayisi += 1
 
-                    # Aynı çalıştırma içinde önceki taramalarda güncellenen kaydı oku.
-                    eski_kayit = guncel_veriler.get(urun_id)
+                    eski_kayit = eski_veriler.get(urun_id)
+
+                    # Eski format (sadece sayı) uyumu
                     if isinstance(eski_kayit, dict):
                         eski_fiyat = eski_kayit.get("fiyat")
                         eski_kupon = eski_kayit.get("kupon_metni")
@@ -363,15 +316,21 @@ def main():
                         eski_fiyat = float(eski_fiyat) if eski_fiyat is not None else None
                     except (TypeError, ValueError):
                         eski_fiyat = None
+
                     try:
-                        son_bildirim = float(son_bildirim) if son_bildirim is not None else None
+                        son_bildirim = (
+                            float(son_bildirim) if son_bildirim is not None else None
+                        )
                     except (TypeError, ValueError):
                         son_bildirim = None
 
+                    # Aynı düşüşü tekrar atmamak için eşik
                     esik = son_bildirim if son_bildirim is not None else eski_fiyat
                     yeni_son_bildirim = son_bildirim
 
+                    # --- FİYAT DÜŞÜŞÜ ---
                     if esik is not None and fiyat < esik:
+                        # %60'tan fazla düşüş şüpheli → bildir ama kaydı yine güncelle
                         if fiyat < (esik * 0.4):
                             print(
                                 f"Şüpheli düşüş (bildirim yok): {ad[:50]} | "
@@ -383,7 +342,11 @@ def main():
                             kupon_notu = (
                                 f"\n🎟️ <i>{escape(kupon_metni)}</i>"
                                 if kupon_metni
-                                else ("\n🎟️ <i>Sepet fiyatı</i>" if sepette_fiyat > 0 else "")
+                                else (
+                                    "\n🎟️ <i>Sepet fiyatı</i>"
+                                    if sepette_fiyat > 0
+                                    else ""
+                                )
                             )
                             mesaj = (
                                 f"🔥 <b>FİYAT DÜŞTÜ!</b>{kupon_notu}\n\n"
@@ -393,12 +356,13 @@ def main():
                                 f"💰 <b>Yeni:</b> {fiyat:.2f} TL\n"
                                 f"✅ <b>İndirim:</b> %{dusus:.1f}\n"
                                 f"💵 <b>Fark:</b> {fark:.2f} TL\n\n"
-                                f'🔗 <a href="{escape(urun_id, quote=True)}">Ürüne Git</a>'
+                                f'🔗 <a href="{escape(urun_id, quote=True)}">'
+                                f"Ürüne Git</a>"
                             )
                             if telegram_mesaj_gonder(mesaj):
                                 yeni_son_bildirim = fiyat
-                                print(f"Fiyat bildirimi gönderildi: {ad} - {fiyat:.2f} TL")
 
+                    # --- YENİ KUPON ---
                     elif (not eski_kupon) and kupon_metni:
                         mesaj = (
                             f"🎟️ <b>YENİ KUPON!</b>\n\n"
@@ -406,10 +370,12 @@ def main():
                             f"🏪 <b>Mağaza:</b> {escape(magaza_adi)}\n"
                             f"💰 <b>Fiyat:</b> {fiyat:.2f} TL\n"
                             f"🎫 <b>Kupon:</b> {escape(kupon_metni)}\n\n"
-                            f'🔗 <a href="{escape(urun_id, quote=True)}">Ürüne Git</a>'
+                            f'🔗 <a href="{escape(urun_id, quote=True)}">'
+                            f"Ürüne Git</a>"
                         )
                         telegram_mesaj_gonder(mesaj)
 
+                    # --- KUPON DEĞİŞTİ ---
                     elif eski_kupon and kupon_metni and eski_kupon != kupon_metni:
                         mesaj = (
                             f"🎟️ <b>KUPON GÜNCELLENDİ!</b>\n\n"
@@ -418,10 +384,12 @@ def main():
                             f"💰 <b>Fiyat:</b> {fiyat:.2f} TL\n"
                             f"🎫 <b>Eski:</b> {escape(eski_kupon)}\n"
                             f"🎫 <b>Yeni:</b> {escape(kupon_metni)}\n\n"
-                            f'🔗 <a href="{escape(urun_id, quote=True)}">Ürüne Git</a>'
+                            f'🔗 <a href="{escape(urun_id, quote=True)}">'
+                            f"Ürüne Git</a>"
                         )
                         telegram_mesaj_gonder(mesaj)
 
+                    # Her zaman kaydı güncelle
                     guncel_veriler[urun_id] = {
                         "fiyat": fiyat,
                         "liste_fiyat": liste_fiyat if liste_fiyat > 0 else None,
@@ -435,11 +403,13 @@ def main():
                     }
 
                 print(
-                    f" -> Sayfa {sayfa} tarandı. İşlenen ürün: {sayfa_urun_sayisi} "
-                    f"(Mağaza toplamı: {toplam_urun})"
+                    f" -> Sayfa {sayfa} tarandı. Eklenen ürün: {sayfa_urun_sayisi} "
+                    f"(Toplam: {toplam_urun})"
                 )
+
                 if sayfa_urun_sayisi == 0:
                     break
+
                 time.sleep(1)
 
             except Exception as e:
@@ -447,7 +417,7 @@ def main():
                 time.sleep(1)
                 continue
 
-        print(f"==> {magaza_adi} tamamlandı - Toplam: {toplam_urun} ürün")
+        print(f"==> {magaza_adi} Tamamlandı - Toplam: {toplam_urun} ürün")
 
     yeni_fiyatlari_kaydet(guncel_veriler)
     print("\nTüm tarama tamamlandı!")
