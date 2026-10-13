@@ -492,11 +492,6 @@ def main():
                     except (TypeError, ValueError):
                         old_price = None
 
-                    try:
-                        min_gorulen_fiyat = float(old_record.get("min_gorulen_fiyat", old_price if old_price else price))
-                    except (TypeError, ValueError):
-                        min_gorulen_fiyat = price
-
                     if (
                         old_price
                         and price < old_price
@@ -511,10 +506,11 @@ def main():
 
                     bildirim_atilsin = False
                     if old_price is not None:
-                        if price < min_gorulen_fiyat:
+                        # Fiyat, bir önceki kaydedilen fiyattan düşükse bildirim atılır.
+                        # Artık 1100'e çıktığında hafıza 1100 olacağı için, sonra 1050 olduğunda 
+                        # 1050 < 1100 şartı sağlanacak ve doğru şekilde bildirim atılacaktır.
+                        if price < old_price:
                             bildirim_atilsin = True
-                    
-                    yeni_min_fiyat = min(price, min_gorulen_fiyat) if old_price is not None else price
 
                     if bildirim_atilsin:
                         difference = old_price - price
@@ -539,9 +535,11 @@ def main():
                             )
                             telegram_mesaj_gonder(message)
 
+                    # Hafızadaki fiyatı her taramada güncel fiyatla güncelliyoruz.
+                    # Böylece fiyat arttığında (örn: 1000 -> 1100) hafıza 1100 olur,
+                    # tekrar düştüğünde (örn: 1100 -> 1050) yeni baz fiyatımız 1100 olur.
                     guncel[product_url] = {
                         "fiyat": price,
-                        "min_gorulen_fiyat": yeni_min_fiyat,
                         "urun_adi": name,
                         "arama_grubu": magaza,
                         "url": product_url,
