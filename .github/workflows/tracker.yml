@@ -1,11 +1,11 @@
-name: N11 Fiyat ve Kupon Takip Botu
+name: N11 Fiyat and Kupon Takip Botu
 
 on:
   schedule:
-    - cron: '*/45 * * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:
 
-# Aynı anda birden fazla bot çalışmasını engelleyen kilit mekanizması
+# Aynı anda üst üste binip çakışma (merge conflict) yaratmasını engelleyen kilit
 concurrency:
   group: n11-bot-run
   cancel-in-progress: false
@@ -39,7 +39,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # Önce uzaktaki güncellemeleri alıp çakışmayı önlüyoruz
+          # Önce uzaktaki güncellemeleri çekip çakışmayı önlüyoruz
           git pull origin main --rebase || echo "Rebase atlandı"
           
           git add fiyatlar.json
