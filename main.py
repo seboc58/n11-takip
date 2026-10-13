@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -115,7 +114,6 @@ def fiyat_metnini_temizle(value):
     ):
         return None
 
-    # Öncelikle para birimi ile yazılmış tutarı al.
     m = re.search(
         r"(?<!\d)(\d{1,3}(?:[.\s]\d{3})+|\d+)"
         r"(?:,(\d{1,2}))?\s*(?:TL|TRY|₺)",
@@ -123,7 +121,6 @@ def fiyat_metnini_temizle(value):
     )
 
     if not m:
-        # Yalnızca alanın kendisi sayıysa kabul et.
         m = re.fullmatch(
             r"\s*(\d{1,3}(?:[.\s]\d{3})+|\d+)"
             r"(?:,(\d{1,2}))?\s*",
@@ -242,7 +239,6 @@ def kartlari_bul(soup):
             continue
         seen.add(url)
 
-        # Ürün bağlantısını içeren en yakın kapsayıcı.
         candidate = link
         for parent in link.parents:
             if getattr(parent, "name", None) in ("body", "html"):
@@ -397,7 +393,6 @@ def detay_sayfasi_dogrula(url):
     if not urun_adi_gecerli(title):
         title = names[0] if names else None
 
-    # URL ile başlık belirgin şekilde uyuşmuyorsa fiyatı reddet.
     slug_words = set(re.findall(r"[a-z0-9]+", url_slug_adi(url).lower()))
     title_words = set(re.findall(r"[a-z0-9]+", (title or "").lower()))
     meaningful = {w for w in slug_words if len(w) > 2}
@@ -412,7 +407,6 @@ def detay_sayfasi_dogrula(url):
     if basket_price is not None:
         return title, basket_price
 
-    # Güvenilir Product verisi yoksa sayfa genelinden rastgele fiyat alma.
     if prices:
         return title, min(prices)
 
@@ -456,119 +450,4 @@ def main():
                 for kart, link, product_url in cards:
                     if product_url in gorulen:
                         continue
-                    gorulen.add(product_url)
-
-                    old_record = onceki_kaydi_bul(eski, product_url)
-                    name = urun_adi_bul(kart, link, product_url)
-
-                    price = sepet_fiyati_bul(kart)
-                    is_basket = price is not None
-
-                    if price is None:
-                        price = normal_fiyati_bul(kart)
-
-                    # Detay sayfası doğrulaması her ürün için yapılır.
-                    detail_name, detail_price = detay_sayfasi_dogrula(
-                        product_url
-                    )
-
-                    if detail_name and urun_adi_gecerli(detail_name):
-                        name = detail_name
-
-                    # Detay fiyatı doğrulanmışsa onu kullan.
-                    if detail_price is not None:
-                        price = detail_price
-                        is_basket = False
-
-                    if not urun_adi_gecerli(name):
-                        old_name = old_record.get("urun_adi", "")
-                        name = (
-                            old_name
-                            if urun_adi_gecerli(old_name)
-                            else None
-                        )
-
-                    if not name or price is None:
-                        logging.warning(
-                            "Ad/fiyat doğrulanamadı, kayıt atlandı: %s",
-                            product_url
-                        )
-                        continue
-
-                    try:
-                        old_price = float(old_record.get("fiyat"))
-                    except (TypeError, ValueError):
-                        old_price = None
-
-                    # %60'tan büyük ani düşüşü otomatik kabul etme.
-                    if (
-                        old_price
-                        and price < old_price
-                        and (old_price - price) / old_price > 0.60
-                    ):
-                        logging.warning(
-                            "Şüpheli fiyat düşüşü; bildirim ve kayıt atlandı: "
-                            "%s | %.2f -> %.2f",
-                            name, old_price, price
-                        )
-                        continue
-
-                    if old_price and price < old_price:
-                        difference = old_price - price
-                        drop = difference / old_price
-
-                        if difference >= 1:
-                            basket_note = (
-                                "\n🎟️ <i>Sepette indirimli fiyat</i>"
-                                if is_basket else ""
-                            )
-
-                            message = (
-                                f"🔥 <b>FİYAT DÜŞTÜ!</b>{basket_note}\n\n"
-                                f"🏷️ <b>Ürün:</b> {escape(name)}\n"
-                                f"🏪 <b>Arama:</b> {escape(magaza)}\n"
-                                f"📉 <b>Eski:</b> {old_price:.2f} TL\n"
-                                f"💰 <b>Yeni:</b> {price:.2f} TL\n"
-                                f"✅ <b>İndirim:</b> %{drop * 100:.1f}\n"
-                                f"💵 <b>Fark:</b> {difference:.2f} TL\n\n"
-                                f'<a href="{escape(product_url, quote=True)}">'
-                                f"Ürüne Git</a>"
-                            )
-                            telegram_mesaj_gonder(message)
-
-                    guncel[product_url] = {
-                        "fiyat": price,
-                        "urun_adi": name,
-                        "arama_grubu": magaza,
-                        "url": product_url,
-                        "son_guncelleme": time.strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
-                    }
-
-                    toplam += 1
-
-                logging.info(
-                    "%s sayfa %s işlendi; toplam %s ürün.",
-                    magaza, sayfa, toplam
-                )
-                time.sleep(1)
-
-            except requests.RequestException as e:
-                logging.error(
-                    "%s sayfa %s hatası: %s", magaza, sayfa, e
-                )
-                time.sleep(1)
-
-        logging.info("%s tamamlandı: %s ürün.", magaza, toplam)
-
-    if yeni_fiyatlari_kaydet(guncel):
-        logging.info(
-            "Tarama tamamlandı. Kayıt sayısı: %s", len(guncel)
-        )
-    else:
-        logging.error("Fiyatlar dosyaya kaydedilemedi.")
-
-
-if __name__ == "__main__":
-    main()
+                    gorulen.add
