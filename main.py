@@ -187,4 +187,104 @@ def kupon_metni_bul(kart):
 
 def urun_fiyati_bul(kart):
     liste_fiyat = 0.0
-    sepette
+    sepette_fiyat = 0.0
+
+    alanlar = kart.find_all(
+        ["ins", "span", "div", "p"],
+        class_=re.compile(r"(price|fiyat|newPrice|salePrice|currentPrice|new|amount|value)", re.I),
+    )
+    for alan in alanlar:
+        metin = metin_al(alan)
+        if re.search(r"sepette|sepet fiyat", metin, re.I):
+            continue
+        if re.search(r"taksit|aylık|ayda|başlayan|seçeneği", metin, re.I):
+            continue
+        f = fiyat_metnini_temizle(metin)
+        if f > 0:
+            liste_fiyat = f
+            break
+
+    alanlar = kart.find_all(
+        ["span", "div", "p", "ins"],
+        class_=re.compile(r"(coupon|kupon|basket|sepette|discount|indirim|campaign)", re.I),
+    )
+    for alan in alanlar:
+        metin = metin_al(alan)
+        if not re.search(r"sepette|sepet fiyat|kupon", metin, re.I):
+            continue
+        f = fiyat_metnini_temizle(metin)
+        if f > 0:
+            sepette_fiyat = f
+            break
+
+    if sepette_fiyat <= 0:
+        tum = metin_al(kart)
+        m = re.search(
+            r"sepette\s*[^\d]{0,10}(\d{1,3}(?:[.\s]\d{3})+|\d+)(?:,\d{1,2})?",
+            tum,
+            re.I,
+        )
+        if m:
+            sepette_fiyat = fiyat_metnini_temizle(m.group(0))
+
+    if liste_fiyat <= 0:
+        adaylar = kart.find_all(
+            ["ins", "span", "div", "p"],
+            class_=re.compile(r"(price|fiyat|newPrice|salePrice|currentPrice|amount|value)", re.I),
+        )
+        if not adaylar:
+            adaylar = kart.find_all(string=re.compile(r"TL|₺"))
+        for aday in adaylar:
+            metin = aday.get_text(" ", strip=True) if hasattr(aday, "get_text") else str(aday)
+            if re.search(r"sepette|sepet fiyat|taksit|aylık|ayda|başlayan|seçeneği", metin, re.I):
+                continue
+            f = fiyat_metnini_temizle(metin)
+            if f > 0:
+                liste_fiyat = f
+                break
+
+    fiyat = sepette_fiyat if sepette_fiyat > 0 else liste_fiyat
+    return liste_fiyat, sepette_fiyat, fiyat
+
+
+def urun_karti_ve_linkleri_bul(soup):
+    sonuc = []
+    eklenen = set()
+
+    # N11'in güncel HTML yapısına göre ürün kartlarını yakala (li, div vb. olabiliyor)
+    kartlar = soup.find_all(["li", "div"], class_=re.compile(r"(column|pro|product|item)", re.I))
+    if not kartlar:
+        kartlar = soup.find_all("li")
+
+    for kart in kartlar:
+        link = kart.find("a", href=True)
+        if not link:
+            continue
+        ham_link = link.get("href", "")
+        if "/urun/" not in ham_link:
+            continue
+
+        urun_id = urun_url_temizle(ham_link)
+        if urun_id in eklenen:
+            continue
+
+        eklenen.add(urun_id)
+        sonuc.append((kart, link, urun_id))
+
+    return sonuc
+
+
+def main():
+    print("N11 fiyat ve kupon taraması başlatılıyor...")
+    eski_veriler = eski_fiyatlari_yukle()
+    guncel_veriler = dict(eski_veriler)
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Referer": "
