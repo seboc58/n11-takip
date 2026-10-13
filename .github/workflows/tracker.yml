@@ -5,23 +5,12 @@ on:
     - cron: '*/15 * * * *'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
-concurrency:
-  group: n11-fiyat-takip
-  cancel-in-progress: false
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
     steps:
       - name: Repoyu Çek
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Python Kur
         uses: actions/setup-python@v5
@@ -37,24 +26,13 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python main.py
+        run: |
+          python main.py
 
       - name: Fiyat Hafızasını Kaydet
-        if: success()
         run: |
-          if [ ! -f fiyatlar.json ]; then
-            echo "fiyatlar.json bulunamadı."
-            exit 1
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add fiyatlar.json
-
-          if git diff --cached --quiet; then
-            echo "Fiyat hafızasında değişiklik yok."
-          else
-            git commit -m "Fiyat hafızası güncellendi"
-            git push origin HEAD:${GITHUB_REF_NAME}
-          fi
+          git commit -m "Fiyat hafızası güncellendi" || echo "Değişiklik yok"
+          git push origin main
