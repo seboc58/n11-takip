@@ -450,4 +450,129 @@ def main():
                 for kart, link, product_url in cards:
                     if product_url in gorulen:
                         continue
-                    gorulen.add
+                    gorulen.add(product_url)
+
+                    old_record = onceki_kaydi_bul(eski, product_url)
+                    name = urun_adi_bul(kart, link, product_url)
+
+                    price = sepet_fiyati_bul(kart)
+                    is_basket = price is not None
+
+                    if price is None:
+                        price = normal_fiyati_bul(kart)
+
+                    detail_name, detail_price = detay_sayfasi_dogrula(
+                        product_url
+                    )
+
+                    if detail_name and urun_adi_gecerli(detail_name):
+                        name = detail_name
+
+                    if detail_price is not None:
+                        price = detail_price
+                        is_basket = False
+
+                    if not urun_adi_gecerli(name):
+                        old_name = old_record.get("urun_adi", "")
+                        name = (
+                            old_name
+                            if urun_adi_gecerli(old_name)
+                            else None
+                        )
+
+                    if not name or price is None:
+                        logging.warning(
+                            "Ad/fiyat doğrulanamadı, kayıt atlandı: %s",
+                            product_url
+                        )
+                        continue
+
+                    try:
+                        old_price = float(old_record.get("fiyat"))
+                    except (TypeError, ValueError):
+                        old_price = None
+
+                    try:
+                        min_gorulen_fiyat = float(old_record.get("min_gorulen_fiyat", old_price if old_price else price))
+                    except (TypeError, ValueError):
+                        min_gorulen_fiyat = price
+
+                    if (
+                        old_price
+                        and price < old_price
+                        and (old_price - price) / old_price > 0.60
+                    ):
+                        logging.warning(
+                            "Şüpheli fiyat düşüşü; bildirim ve kayıt atlandı: "
+                            "%s | %.2f -> %.2f",
+                            name, old_price, price
+                        )
+                        continue
+
+                    bildirim_atilsin = False
+                    if old_price is not None:
+                        if price < min_gorulen_fiyat:
+                            bildirim_atilsin = True
+                    
+                    yeni_min_fiyat = min(price, min_gorulen_fiyat) if old_price is not None else price
+
+                    if bildirim_atilsin:
+                        difference = old_price - price
+                        drop = difference / old_price
+
+                        if difference >= 1:
+                            basket_note = (
+                                "\n🎟️ <i>Sepette indirimli fiyat</i>"
+                                if is_basket else ""
+                            )
+
+                            message = (
+                                f"🔥 <b>FİYAT DÜŞTÜ!</b>{basket_note}\n\n"
+                                f"🏷️ <b>Ürün:</b> {escape(name)}\n"
+                                f"🏪 <b>Arama:</b> {escape(magaza)}\n"
+                                f"📉 <b>Eski:</b> {old_price:.2f} TL\n"
+                                f"💰 <b>Yeni:</b> {price:.2f} TL\n"
+                                f"✅ <b>İndirim:</b> %{drop * 100:.1f}\n"
+                                f"💵 <b>Fark:</b> {difference:.2f} TL\n\n"
+                                f'<a href="{escape(product_url, quote=True)}">'
+                                f"Ürüne Git</a>"
+                            )
+                            telegram_mesaj_gonder(message)
+
+                    guncel[product_url] = {
+                        "fiyat": price,
+                        "min_gorulen_fiyat": yeni_min_fiyat,
+                        "urun_adi": name,
+                        "arama_grubu": magaza,
+                        "url": product_url,
+                        "son_guncelleme": time.strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        )
+                    }
+
+                    toplam += 1
+
+                logging.info(
+                    "%s sayfa %s işlendi; toplam %s ürün.",
+                    magaza, sayfa, toplam
+                )
+                time.sleep(1)
+
+            except requests.RequestException as e:
+                logging.error(
+                    "%s sayfa %s hatası: %s", magaza, sayfa, e
+                )
+                time.sleep(1)
+
+        logging.info("%s tamamlandı: %s ürün.", magaza, toplam)
+
+    if yeni_fiyatlari_kaydet(guncel):
+        logging.info(
+            "Tarama tamamlandı. Kayıt sayısı: %s", len(guncel)
+        )
+    else:
+        logging.error("Fiyatlar dosyaya kaydedilemedi.")
+
+
+if __name__ == "__main__":
+    main()
