@@ -187,21 +187,4 @@ def kupon_metni_bul(kart):
 
 def urun_fiyati_bul(kart):
     liste_fiyat = 0.0
-    sepette_fiyat = 0.0
-
-    alanlar = kart.find_all(
-        ["ins", "span", "div", "p"],
-        class_=re.compile(r"(price|fiyat|newPrice|salePrice|currentPrice|new|amount|value)", re.I),
-    )
-    for alan in alanlar:
-        metin = metin_al(alan)
-        if re.search(r"sepette|sepet fiyat", metin, re.I):
-            continue
-        if re.search(r"taksit|aylık|ayda|başlayan|seçeneği", metin, re.I):
-            continue
-        f = fiyat_metnini_temizle(metin)
-        if f > 0:
-            liste_fiyat = f
-            break
-
-    alanlar = kart.
+    sepette
