@@ -2,7 +2,7 @@ name: N11 Fiyat ve Kupon Takip Botu
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 jobs:
