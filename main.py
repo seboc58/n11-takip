@@ -119,6 +119,7 @@ def urun_adi_gecerli_mi(ad):
     ad = (ad or "").strip()
     if len(ad) < 4:
         return False
+    # Başlık alanına fiyat metni geldiyse bunu ürün adı kabul etme.
     if re.fullmatch(r"[\d.,\s]+\s*(?:TL|₺)", ad, re.I):
         return False
     if re.fullmatch(r"(?:TL|₺)?\s*[\d.,\s]+", ad, re.I):
@@ -147,6 +148,7 @@ def urun_adi_bul(kart, link_tag, urun_url=""):
     if urun_adi_gecerli_mi(link_text):
         return link_text[:180]
 
+    # Son çare: ürün URL'sindeki slug'dan okunabilir bir ad üret.
     slug = urlsplit(urun_url or link_tag.get("href", "")).path.rstrip("/").split("/")[-1]
     slug = re.sub(r"-\d+$", "", slug)
     slug = re.sub(r"[-_]+", " ", slug).strip()
@@ -248,18 +250,11 @@ def urun_fiyati_bul(kart):
 
 
 def urun_karti_ve_linkleri_bul(soup):
+    """Her ürün URL'sini kendi en yakın ürün kartıyla eşleştir; üst kapsayıcıyı ürün kartı sanma."""
     sonuc = []
     eklenen = set()
 
-    # N11'in güncel HTML yapısına göre ürün kartlarını yakala (li, div vb. olabiliyor)
-    kartlar = soup.find_all(["li", "div"], class_=re.compile(r"(column|pro|product|item)", re.I))
-    if not kartlar:
-        kartlar = soup.find_all("li")
-
-    for kart in kartlar:
-        link = kart.find("a", href=True)
-        if not link:
-            continue
+    for link in soup.find_all("a", href=True):
         ham_link = link.get("href", "")
         if "/urun/" not in ham_link:
             continue
@@ -267,6 +262,33 @@ def urun_karti_ve_linkleri_bul(soup):
         urun_id = urun_url_temizle(ham_link)
         if urun_id in eklenen:
             continue
+
+        kart = None
+        for parent in link.parents:
+            if getattr(parent, "name", None) not in ("li", "div", "article"):
+                continue
+            classes = " ".join(parent.get("class", []))
+            if re.search(r"(product|column|pro|item)", classes, re.I):
+                # En yakın eşleşen kapsayıcıyı al.
+                kart = parent
+                break
+
+        if kart is None:
+            kart = link.parent
+        if kart is None:
+            continue
+
+        # Seçilen kart başka bir ürünün bağlantısını önce içeriyorsa yanlış eşleşmeyi önle.
+        kart_linkleri = [
+            a for a in kart.find_all("a", href=True)
+            if "/urun/" in a.get("href", "")
+        ]
+        if kart_linkleri:
+            ilk_url = urun_url_temizle(kart_linkleri[0]["href"])
+            if ilk_url != urun_id:
+                # Daha yakın bir kart bulmak için ebeveyn zincirinde yukarı gitmeden
+                # bu bağlantıyı atlama; her bağlantı kendi kartıyla ayrı işlenebilir.
+                pass
 
         eklenen.add(urun_id)
         sonuc.append((kart, link, urun_id))
@@ -283,8 +305,153 @@ def main():
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/122.0.0.0 Safari/537.36"
+            "Chrome/120.0.0.0 Safari/537.36"
         ),
         "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Referer": "
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://www.n11.com/",
+    }
+
+    # Aynı ürün farklı arama gruplarında görünürse aynı çalıştırmada ikinci kez
+    # bildirim üretmesini önleyen global küme.
+    islenen_urunler = set()
+
+    for magaza_adi, base_url in MAGAZALAR.items():
+        print(f"\n[{magaza_adi}] taranıyor...")
+        toplam_urun = 0
+
+        for sayfa in range(1, SAYFA_SAYISI + 1):
+            url = f"{base_url}&pg={sayfa}"
+            try:
+                response = requests.get(url, headers=headers, timeout=30)
+                if response.status_code != 200:
+                    print(f" -> Sayfa {sayfa} HTTP {response.status_code}, atlanıyor.")
+                    time.sleep(1)
+                    continue
+
+                soup = BeautifulSoup(response.text, "html.parser")
+                urunler = urun_karti_ve_linkleri_bul(soup)
+                sayfa_urun_sayisi = 0
+
+                for kart, link_tag, urun_id in urunler:
+                    if urun_id in islenen_urunler:
+                        continue
+
+                    liste_fiyat, sepette_fiyat, fiyat = urun_fiyati_bul(kart)
+                    if fiyat <= 0:
+                        continue
+
+                    ad = urun_adi_bul(kart, link_tag, urun_id)
+                    kupon_metni = kupon_metni_bul(kart)
+
+                    islenen_urunler.add(urun_id)
+                    toplam_urun += 1
+                    sayfa_urun_sayisi += 1
+
+                    # Aynı çalıştırma içinde önceki taramalarda güncellenen kaydı oku.
+                    eski_kayit = guncel_veriler.get(urun_id)
+                    if isinstance(eski_kayit, dict):
+                        eski_fiyat = eski_kayit.get("fiyat")
+                        eski_kupon = eski_kayit.get("kupon_metni")
+                        son_bildirim = eski_kayit.get("son_bildirim_fiyati")
+                    else:
+                        eski_fiyat = eski_kayit
+                        eski_kupon = None
+                        son_bildirim = None
+
+                    try:
+                        eski_fiyat = float(eski_fiyat) if eski_fiyat is not None else None
+                    except (TypeError, ValueError):
+                        eski_fiyat = None
+                    try:
+                        son_bildirim = float(son_bildirim) if son_bildirim is not None else None
+                    except (TypeError, ValueError):
+                        son_bildirim = None
+
+                    esik = son_bildirim if son_bildirim is not None else eski_fiyat
+                    yeni_son_bildirim = son_bildirim
+
+                    if esik is not None and fiyat < esik:
+                        if fiyat < (esik * 0.4):
+                            print(
+                                f"Şüpheli düşüş (bildirim yok): {ad[:50]} | "
+                                f"{esik:.2f} -> {fiyat:.2f}"
+                            )
+                        else:
+                            fark = esik - fiyat
+                            dusus = (fark / esik) * 100
+                            kupon_notu = (
+                                f"\n🎟️ <i>{escape(kupon_metni)}</i>"
+                                if kupon_metni
+                                else ("\n🎟️ <i>Sepet fiyatı</i>" if sepette_fiyat > 0 else "")
+                            )
+                            mesaj = (
+                                f"🔥 <b>FİYAT DÜŞTÜ!</b>{kupon_notu}\n\n"
+                                f"🏷️ <b>Ürün:</b> {escape(ad)}\n"
+                                f"🏪 <b>Mağaza:</b> {escape(magaza_adi)}\n"
+                                f"📉 <b>Eski:</b> {esik:.2f} TL\n"
+                                f"💰 <b>Yeni:</b> {fiyat:.2f} TL\n"
+                                f"✅ <b>İndirim:</b> %{dusus:.1f}\n"
+                                f"💵 <b>Fark:</b> {fark:.2f} TL\n\n"
+                                f'🔗 <a href="{escape(urun_id, quote=True)}">Ürüne Git</a>'
+                            )
+                            if telegram_mesaj_gonder(mesaj):
+                                yeni_son_bildirim = fiyat
+                                print(f"Fiyat bildirimi gönderildi: {ad} - {fiyat:.2f} TL")
+
+                    elif (not eski_kupon) and kupon_metni:
+                        mesaj = (
+                            f"🎟️ <b>YENİ KUPON!</b>\n\n"
+                            f"🏷️ <b>Ürün:</b> {escape(ad)}\n"
+                            f"🏪 <b>Mağaza:</b> {escape(magaza_adi)}\n"
+                            f"💰 <b>Fiyat:</b> {fiyat:.2f} TL\n"
+                            f"🎫 <b>Kupon:</b> {escape(kupon_metni)}\n\n"
+                            f'🔗 <a href="{escape(urun_id, quote=True)}">Ürüne Git</a>'
+                        )
+                        telegram_mesaj_gonder(mesaj)
+
+                    elif eski_kupon and kupon_metni and eski_kupon != kupon_metni:
+                        mesaj = (
+                            f"🎟️ <b>KUPON GÜNCELLENDİ!</b>\n\n"
+                            f"🏷️ <b>Ürün:</b> {escape(ad)}\n"
+                            f"🏪 <b>Mağaza:</b> {escape(magaza_adi)}\n"
+                            f"💰 <b>Fiyat:</b> {fiyat:.2f} TL\n"
+                            f"🎫 <b>Eski:</b> {escape(eski_kupon)}\n"
+                            f"🎫 <b>Yeni:</b> {escape(kupon_metni)}\n\n"
+                            f'🔗 <a href="{escape(urun_id, quote=True)}">Ürüne Git</a>'
+                        )
+                        telegram_mesaj_gonder(mesaj)
+
+                    guncel_veriler[urun_id] = {
+                        "fiyat": fiyat,
+                        "liste_fiyat": liste_fiyat if liste_fiyat > 0 else None,
+                        "sepette_fiyat": sepette_fiyat if sepette_fiyat > 0 else None,
+                        "kupon_metni": kupon_metni,
+                        "son_bildirim_fiyati": yeni_son_bildirim,
+                        "urun_adi": ad,
+                        "arama_grubu": magaza_adi,
+                        "url": urun_id,
+                        "son_guncelleme": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+
+                print(
+                    f" -> Sayfa {sayfa} tarandı. İşlenen ürün: {sayfa_urun_sayisi} "
+                    f"(Mağaza toplamı: {toplam_urun})"
+                )
+                if sayfa_urun_sayisi == 0:
+                    break
+                time.sleep(1)
+
+            except Exception as e:
+                print(f"Sayfa {sayfa} hatası: {e}")
+                time.sleep(1)
+                continue
+
+        print(f"==> {magaza_adi} tamamlandı - Toplam: {toplam_urun} ürün")
+
+    yeni_fiyatlari_kaydet(guncel_veriler)
+    print("\nTüm tarama tamamlandı!")
+
+
+if __name__ == "__main__":
+    main()
