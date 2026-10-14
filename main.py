@@ -150,6 +150,25 @@ def urun_url_temizle(url):
     ))
 
 
+def urun_id_al(url):
+    """
+    n11 ürün URL'lerinden değişmeyen benzersiz kısmı (veya ID'yi) ayıklar.
+    Örn: https://www.n11.com/urun/ornek-urun-123456 -> ornek-urun-123456
+    """
+    temiz_url = urun_url_temizle(url)
+    path = urlsplit(temiz_url).path.rstrip("/")
+    # Eğer path içinde /urun/ geçiyorsa son parçayı alalım
+    parts = path.split("/")
+    if "urun" in parts:
+        try:
+            idx = parts.index("urun")
+            if idx + 1 < len(parts):
+                return parts[idx + 1]
+        except ValueError:
+            pass
+    return path
+
+
 def urun_adi_gecerli(name):
     if not name:
         return False
@@ -235,9 +254,10 @@ def kartlari_bul(soup):
 
     for link in links:
         url = urun_url_temizle(link.get("href", ""))
-        if url in seen:
+        u_id = urun_id_al(url)
+        if u_id in seen:
             continue
-        seen.add(url)
+        seen.add(u_id)
 
         candidate = link
         for parent in link.parents:
@@ -414,8 +434,8 @@ def detay_sayfasi_dogrula(url):
     return title, None
 
 
-def onceki_kaydi_bul(data, url):
-    old = data.get(url)
+def onceki_kaydi_bul(data, u_id):
+    old = data.get(u_id)
     return old if isinstance(old, dict) else {}
 
 
@@ -448,11 +468,12 @@ def main():
                     continue
 
                 for kart, link, product_url in cards:
-                    if product_url in gorulen:
+                    u_id = urun_id_al(product_url)
+                    if u_id in gorulen:
                         continue
-                    gorulen.add(product_url)
+                    gorulen.add(u_id)
 
-                    old_record = onceki_kaydi_bul(eski, product_url)
+                    old_record = onceki_kaydi_bul(eski, u_id)
                     name = urun_adi_bul(kart, link, product_url)
 
                     price = sepet_fiyati_bul(kart)
@@ -511,11 +532,9 @@ def main():
 
                     bildirim_atilsin = False
                     if old_price is not None:
-                        # Fiyat, kayıtlı olan eski fiyattan düşükse VE 
-                        # daha önce bu yeni fiyattan (veya daha düşük bir fiyattan) bildirim atılmadıysa
                         if price < old_price:
                             if son_bildirim_fiyati is None or price < son_bildirim_fiyati:
-                                bildirim_atilsin =True
+                                bildirim_atilsin = True
 
                     if bildirim_atilsin:
                         difference = old_price - price
@@ -541,18 +560,13 @@ def main():
                             if telegram_mesaj_gonder(message):
                                 son_bildirim_fiyati = price
                             else:
-                                # Mesaj gönderilemediyse bir sonraki döngüde tekrar denemek için bildirim fiyatını güncellemiyoruz
                                 bildirim_atilsin = False
 
-                    # Hafızadaki fiyatı ve son bildirim yapılan fiyatı güncelliyoruz.
-                    # Eğer bildirim atıldıysa son_bildirim_fiyati güncellenir, böylece aynı fiyatta tekrar bildirim atılmaz.
-                    # Eğer fiyat arttıysa veya aynı kaldıysa eski son_bildirim_fiyati korunur.
                     current_son_bildirim = son_bildirim_fiyati if not bildirim_atilsin else price
-                    # Dikkat: eğer hiç bildirim atılmadıysa ama eski kayıtta son_bildirim_fiyati varsa onu koruyalım:
                     if not bildirim_atilsin:
                         current_son_bildirim = old_record.get("son_bildirim_fiyati")
 
-                    guncel[product_url] = {
+                    guncel[u_id] = {
                         "fiyat": price,
                         "urun_adi": name,
                         "arama_grubu": magaza,
