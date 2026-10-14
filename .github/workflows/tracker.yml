@@ -5,7 +5,11 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch:
 
-# Aynı anda üst üste binip çakışma (merge conflict) yaratmasını engelleyen kilit
+# GitHub Actions'ın repoya yazabilmesi (commit/push yapabilmesi) için gerekli izin
+permissions:
+  contents: write
+
+# Aynı anda üst üste binip çakışma yaratmasını engelleyen kilit
 concurrency:
   group: n11-bot-run
   cancel-in-progress: false
@@ -39,9 +43,10 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # Önce uzaktaki güncellemeleri çekip çakışmayı önlüyoruz
-          git pull origin main --rebase || echo "Rebase atlandı"
+          # Uzaktaki olası değişiklikleri güvenli şekilde al
+          git fetch origin main
+          git rebase origin/main || git rebase --abort
           
           git add fiyatlar.json
-          git commit -m "Fiyat hafızası güncellendi" || echo "Değişiklik yok"
+          git commit -m "Fiyat hafızası güncellendi [skip ci]" || echo "Değişiklik yok"
           git push origin main
