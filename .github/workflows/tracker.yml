@@ -43,12 +43,12 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # 1. Önce değişen dosyayı stage alanına alıp commit yapıyoruz
+          # Değişen dosyayı stage alanına alıp commit yapıyoruz
           git add fiyatlar.json
           git commit -m "Fiyat hafızası güncellendi [skip ci]" || echo "Değişiklik yok"
           
-          # 2. Commit yaptıktan sonra uzaktaki değişikliklerle güvenli şekilde birleştiriyoruz
-          git pull --rebase origin main || git rebase --abort
+          # Çakışma yaşanırsa yerel (güncel) dosyayı öncelikli tutarak rebase et
+          git pull --rebase -X ours origin main || git rebase --abort
           
-          # 3. Güncellenmiş hafızayı repoya pushluyoruz
+          # Güncellenmiş hafızayı repoya pushla
           git push origin main
