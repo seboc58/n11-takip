@@ -492,6 +492,11 @@ def main():
                     except (TypeError, ValueError):
                         old_price = None
 
+                    try:
+                        son_bildirim_fiyati = float(old_record.get("son_bildirim_fiyati"))
+                    except (TypeError, ValueError):
+                        son_bildirim_fiyati = None
+
                     if (
                         old_price
                         and price < old_price
@@ -506,11 +511,11 @@ def main():
 
                     bildirim_atilsin = False
                     if old_price is not None:
-                        # Fiyat, bir önceki kaydedilen fiyattan düşükse bildirim atılır.
-                        # Artık 1100'e çıktığında hafıza 1100 olacağı için, sonra 1050 olduğunda 
-                        # 1050 < 1100 şartı sağlanacak ve doğru şekilde bildirim atılacaktır.
+                        # Fiyat, kayıtlı olan eski fiyattan düşükse VE 
+                        # daha önce bu yeni fiyattan (veya daha düşük bir fiyattan) bildirim atılmadıysa
                         if price < old_price:
-                            bildirim_atilsin = True
+                            if son_bildirim_fiyati is None or price < son_bildirim_fiyati:
+                                bildirim_atilsin =True
 
                     if bildirim_atilsin:
                         difference = old_price - price
@@ -533,16 +538,26 @@ def main():
                                 f'<a href="{escape(product_url, quote=True)}">'
                                 f"Ürüne Git</a>"
                             )
-                            telegram_mesaj_gonder(message)
+                            if telegram_mesaj_gonder(message):
+                                son_bildirim_fiyati = price
+                            else:
+                                # Mesaj gönderilemediyse bir sonraki döngüde tekrar denemek için bildirim fiyatını güncellemiyoruz
+                                bildirim_atilsin = False
 
-                    # Hafızadaki fiyatı her taramada güncel fiyatla güncelliyoruz.
-                    # Böylece fiyat arttığında (örn: 1000 -> 1100) hafıza 1100 olur,
-                    # tekrar düştüğünde (örn: 1100 -> 1050) yeni baz fiyatımız 1100 olur.
+                    # Hafızadaki fiyatı ve son bildirim yapılan fiyatı güncelliyoruz.
+                    # Eğer bildirim atıldıysa son_bildirim_fiyati güncellenir, böylece aynı fiyatta tekrar bildirim atılmaz.
+                    # Eğer fiyat arttıysa veya aynı kaldıysa eski son_bildirim_fiyati korunur.
+                    current_son_bildirim = son_bildirim_fiyati if not bildirim_atilsin else price
+                    # Dikkat: eğer hiç bildirim atılmadıysa ama eski kayıtta son_bildirim_fiyati varsa onu koruyalım:
+                    if not bildirim_atilsin:
+                        current_son_bildirim = old_record.get("son_bildirim_fiyati")
+
                     guncel[product_url] = {
                         "fiyat": price,
                         "urun_adi": name,
                         "arama_grubu": magaza,
                         "url": product_url,
+                        "son_bildirim_fiyati": current_son_bildirim,
                         "son_guncelleme": time.strftime(
                             "%Y-%m-%d %H:%M:%S"
                         )
