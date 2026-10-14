@@ -258,6 +258,21 @@ def kartlari_bul(soup):
 def sepet_fiyati_bul(container):
     candidates = []
 
+    # n11 detay sayfalarındaki özel sepet fiyatı class ve alanları öncelikli taranır
+    basket_selectors = [
+        "[class*='basketPrice']",
+        "[class*='price-basket']",
+        "[class*='campaignPrice']",
+        "[class*='uniquesepet']",
+        ".price.newPrice"
+    ]
+    for sel in basket_selectors:
+        for el in container.select(sel):
+            text = metin_al(el)
+            price = fiyat_metnini_temizle(text)
+            if price is not None:
+                candidates.append((0, price))
+
     for el in container.find_all(
         ["span", "div", "p", "strong", "b", "ins"]
     ):
@@ -383,7 +398,7 @@ def detay_sayfasi_dogrula(url):
         soup = BeautifulSoup(response.text, "html.parser")
     except requests.RequestException as e:
         logging.warning("Detay sayfası açılamadı: %s (%s)", url, e)
-        return None, None
+        return None, None, False
 
     names, prices = jsonld_urun_verisi(soup)
 
@@ -401,17 +416,18 @@ def detay_sayfasi_dogrula(url):
         overlap = len(meaningful & title_words) / len(meaningful)
         if overlap < 0.35:
             logging.warning("Ürün adı/URL uyuşmuyor: %s", url)
-            return None, None
+            return None, None, False
 
+    # Detay sayfasında öncelik her zaman sepet fiyatındadır
     basket_price = sepet_fiyati_bul(soup)
     if basket_price is not None:
-        return title, basket_price
+        return title, basket_price, True
 
     if prices:
-        return title, min(prices)
+        return title, min(prices), False
 
     logging.warning("Detay sayfasında yapılandırılmış fiyat yok: %s", url)
-    return title, None
+    return title, None, False
 
 
 def onceki_kaydi_bul(data, url):
@@ -461,7 +477,7 @@ def main():
                     if price is None:
                         price = normal_fiyati_bul(kart)
 
-                    detail_name, detail_price = detay_sayfasi_dogrula(
+                    detail_name, detail_price, detail_is_basket = detay_sayfasi_dogrula(
                         product_url
                     )
 
@@ -470,7 +486,7 @@ def main():
 
                     if detail_price is not None:
                         price = detail_price
-                        is_basket = False
+                        is_basket = detail_is_basket
 
                     if not urun_adi_gecerli(name):
                         old_name = old_record.get("urun_adi", "")
@@ -511,11 +527,9 @@ def main():
 
                     bildirim_atilsin = False
                     if old_price is not None:
-                        # Fiyat, kayıtlı olan eski fiyattan düşükse VE 
-                        # daha önce bu yeni fiyattan (veya daha düşük bir fiyattan) bildirim atılmadıysa
                         if price < old_price:
                             if son_bildirim_fiyati is None or price < son_bildirim_fiyati:
-                                bildirim_atilsin =True
+                                bildirim_atilsin = True
 
                     if bildirim_atilsin:
                         difference = old_price - price
@@ -541,14 +555,9 @@ def main():
                             if telegram_mesaj_gonder(message):
                                 son_bildirim_fiyati = price
                             else:
-                                # Mesaj gönderilemediyse bir sonraki döngüde tekrar denemek için bildirim fiyatını güncellemiyoruz
                                 bildirim_atilsin = False
 
-                    # Hafızadaki fiyatı ve son bildirim yapılan fiyatı güncelliyoruz.
-                    # Eğer bildirim atıldıysa son_bildirim_fiyati güncellenir, böylece aynı fiyatta tekrar bildirim atılmaz.
-                    # Eğer fiyat arttıysa veya aynı kaldıysa eski son_bildirim_fiyati korunur.
                     current_son_bildirim = son_bildirim_fiyati if not bildirim_atilsin else price
-                    # Dikkat: eğer hiç bildirim atılmadıysa ama eski kayıtta son_bildirim_fiyati varsa onu koruyalım:
                     if not bildirim_atilsin:
                         current_son_bildirim = old_record.get("son_bildirim_fiyati")
 
