@@ -275,10 +275,7 @@ def main():
                 cards = kartlari_bul(soup)
 
                 if not cards:
-                    logging.warning(
-                        "%s sayfa %s: ürün bulunamadı.",
-                        magaza, sayfa
-                    )
+                    logging.warning("%s sayfa %s: ürün bulunamadı.", magaza, sayfa)
                     time.sleep(1)
                     continue
 
@@ -293,10 +290,7 @@ def main():
                     name, price = detay_sayfasi_dogrula(product_url)
 
                     if not name or price is None:
-                        logging.warning(
-                            "Ad/fiyat doğrulanamadı, kayıt atlandı: %s",
-                            product_url
-                        )
+                        logging.warning("Ad/fiyat doğrulanamadı, kayıt atlandı: %s", product_url)
                         continue
 
                     try:
@@ -315,8 +309,7 @@ def main():
                         and (old_price - price) / old_price > 0.60
                     ):
                         logging.warning(
-                            "Şüpheli fiyat düşüşü; bildirim ve kayıt atlandı: "
-                            "%s | %.2f -> %.2f",
+                            "Şüpheli fiyat düşüşü; bildirim ve kayıt atlandı: %s | %.2f -> %.2f",
                             name, old_price, price
                         )
                         continue
@@ -340,8 +333,7 @@ def main():
                                 f"💰 <b>Yeni:</b> {price:.2f} TL\n"
                                 f"✅ <b>İndirim:</b> %{drop * 100:.1f}\n"
                                 f"💵 <b>Fark:</b> {difference:.2f} TL\n\n"
-                                f'<a href="{escape(product_url, quote=True)}">'
-                                f"Ürüne Git</a>"
+                                f'<a href="{escape(product_url, quote=True)}">Ürüne Git</a>'
                             )
                             if telegram_mesaj_gonder(message):
                                 son_bildirim_fiyati = price
@@ -358,19 +350,25 @@ def main():
                         "arama_grubu": magaza,
                         "url": product_url,
                         "son_bildirim_fiyati": current_son_bildirim,
-                        "son_guncelleme": time.strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
+                        "son_guncelleme": time.strftime("%Y-%m-%d %H:%M:%S")
                     }
 
                     toplam += 1
 
-                logging.info(
-                    "%s sayfa %s işlendi; toplam %s ürün.",
-                    magaza, sayfa, toplam
-                )
+                logging.info("%s sayfa %s işlendi; toplam %s ürün.", magaza, sayfa, toplam)
                 time.sleep(1)
 
             except requests.RequestException as e:
-                logging.error(
-                    "%s sayfa %s
+                logging.error("%s sayfa %s hatası: %s", magaza, sayfa, e)
+                time.sleep(1)
+
+        logging.info("%s tamamlandı: %s ürün.", magaza, toplam)
+
+    if yeni_fiyatlari_kaydet(guncel):
+        logging.info("Tarama tamamlandı. Kayıt sayısı: %s", len(guncel))
+    else:
+        logging.error("Fiyatlar dosyaya kaydedilemedi.")
+
+
+if __name__ == "__main__":
+    main()
