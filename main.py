@@ -5,7 +5,7 @@ import re
 import logging
 import requests
 from html import escape
-from urllib.parse import urljoin, urlsplit, urlunsplit, unquote
+from urllib.parse import urljoin, urlsplit, urlunsplit, unquote, quote_plus
 from bs4 import BeautifulSoup
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -263,7 +263,7 @@ def detay_sayfasi_dogrula(url):
             slug = url_slug_adi(url)
             title = slug if urun_adi_gecerli(slug) else "N11 Ürünü"
 
-        # Başlıktaki SEO eklerini temizle ("Fiyatları ve Özellikleri", "- n11" vb.)
+        # Başlıktaki SEO eklerini temizle
         if title:
             title = re.sub(r"\s*-\s*N11.*$", "", title, flags=re.I)
             title = re.sub(r"\s*Fiyatları\s+ve\s+Özellikleri.*$", "", title, flags=re.I)
@@ -359,9 +359,11 @@ def main():
                         drop = difference / old_price
 
                         if difference >= 1:
+                            akakce_url = f"https://www.akakce.com/arama/?q={quote_plus(name)}"
                             message = (
                                 f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
-                                f"🏷️ <b>Ürün:</b> {escape(name)}\n"
+                                f"🏷️ <b>Ürün:</b> {escape(name)} "
+                                f'(<a href="{escape(akakce_url, quote=True)}">🔍 Akakçe</a>)\n'
                                 f"🏪 <b>Mağaza:</b> {escape(seller or magaza)}\n"
                                 f"📉 <b>Eski:</b> {old_price:.2f} TL\n"
                                 f"💰 <b>Yeni:</b> {price:.2f} TL\n"
