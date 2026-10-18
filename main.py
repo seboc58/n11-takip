@@ -30,6 +30,7 @@ MAGAZALAR = {
     "Skechers": "https://www.n11.com/arama?q=skechers",
     "Karaca": "https://www.n11.com/arama?q=karaca",
     "Tefal": "https://www.n11.com/arama?q=tefal",
+    "Brita": "https://www.n11.com/arama?q=brita",
 }
 
 SESSION = requests.Session()
