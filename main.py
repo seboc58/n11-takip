@@ -292,4 +292,85 @@ def main():
 
                     name, price = detay_sayfasi_dogrula(product_url)
 
-                    if not name or price
+                    if not name or price is None:
+                        logging.warning(
+                            "Ad/fiyat doğrulanamadı, kayıt atlandı: %s",
+                            product_url
+                        )
+                        continue
+
+                    try:
+                        old_price = float(old_record.get("fiyat"))
+                    except (TypeError, ValueError):
+                        old_price = None
+
+                    try:
+                        son_bildirim_fiyati = float(old_record.get("son_bildirim_fiyati"))
+                    except (TypeError, ValueError):
+                        son_bildirim_fiyati = None
+
+                    if (
+                        old_price
+                        and price < old_price
+                        and (old_price - price) / old_price > 0.60
+                    ):
+                        logging.warning(
+                            "Şüpheli fiyat düşüşü; bildirim ve kayıt atlandı: "
+                            "%s | %.2f -> %.2f",
+                            name, old_price, price
+                        )
+                        continue
+
+                    bildirim_atilsin = False
+                    if old_price is not None:
+                        if price < old_price:
+                            if son_bildirim_fiyati is None or price < son_bildirim_fiyati:
+                                bildirim_atilsin = True
+
+                    if bildirim_atilsin:
+                        difference = old_price - price
+                        drop = difference / old_price
+
+                        if difference >= 1:
+                            message = (
+                                f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
+                                f"🏷️ <b>Ürün:</b> {escape(name)}\n"
+                                f"🏪 <b>Arama:</b> {escape(magaza)}\n"
+                                f"📉 <b>Eski:</b> {old_price:.2f} TL\n"
+                                f"💰 <b>Yeni:</b> {price:.2f} TL\n"
+                                f"✅ <b>İndirim:</b> %{drop * 100:.1f}\n"
+                                f"💵 <b>Fark:</b> {difference:.2f} TL\n\n"
+                                f'<a href="{escape(product_url, quote=True)}">'
+                                f"Ürüne Git</a>"
+                            )
+                            if telegram_mesaj_gonder(message):
+                                son_bildirim_fiyati = price
+                            else:
+                                bildirim_atilsin = False
+
+                    current_son_bildirim = son_bildirim_fiyati if not bildirim_atilsin else price
+                    if not bildirim_atilsin:
+                        current_son_bildirim = old_record.get("son_bildirim_fiyati")
+
+                    guncel[u_id] = {
+                        "fiyat": price,
+                        "urun_adi": name,
+                        "arama_grubu": magaza,
+                        "url": product_url,
+                        "son_bildirim_fiyati": current_son_bildirim,
+                        "son_guncelleme": time.strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        )
+                    }
+
+                    toplam += 1
+
+                logging.info(
+                    "%s sayfa %s işlendi; toplam %s ürün.",
+                    magaza, sayfa, toplam
+                )
+                time.sleep(1)
+
+            except requests.RequestException as e:
+                logging.error(
+                    "%s sayfa %s
