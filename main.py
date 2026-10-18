@@ -303,6 +303,7 @@ def main():
                     except (TypeError, ValueError):
                         son_bildirim_fiyati = None
 
+                    # Şüpheli büyük düşüşleri engelle
                     if (
                         old_price
                         and price < old_price
@@ -315,6 +316,9 @@ def main():
                         continue
 
                     bildirim_atilsin = False
+                    
+                    # 1. Koddaki mantık: Sadece fiyat eskisine göre DÜŞTÜYSE ve 
+                    # daha önce bu fiyattan (veya daha düşük bir fiyattan) bildirim atılmadıysa tetikle.
                     if old_price is not None:
                         if price < old_price:
                             if son_bildirim_fiyati is None or price < son_bildirim_fiyati:
@@ -340,9 +344,8 @@ def main():
                             else:
                                 bildirim_atilsin = False
 
-                    current_son_bildirim = son_bildirim_fiyati if not bildirim_atilsin else price
-                    if not bildirim_atilsin:
-                        current_son_bildirim = old_record.get("son_bildirim_fiyati")
+                    # Eğer bildirim atıldıysa son bildirim fiyatını güncelle, atılmadıysa eskisini koru
+                    current_son_bildirim = son_bildirim_fiyati if bildirim_atilsin else old_record.get("son_bildirim_fiyati")
 
                     guncel[u_id] = {
                         "fiyat": price,
