@@ -216,7 +216,6 @@ def detay_sayfasi_dogrula(url):
                         if urun_adi_gecerli(t_candidate):
                             title = t_candidate.strip()
 
-                    # Satıcı bilgisini JSON-LD içerisinden yakalama
                     if not seller_name:
                         seller = obj.get('seller') or obj.get('brand')
                         if isinstance(seller, dict):
@@ -234,7 +233,6 @@ def detay_sayfasi_dogrula(url):
                                 val = float(first_offer.get('price'))
                                 if val > 0:
                                     price = val
-                            # offer içerisindeki seller kontrolü
                             off_seller = first_offer.get('seller')
                             if isinstance(off_seller, dict) and off_seller.get('name'):
                                 seller_name = str(off_seller.get('name')).strip()
@@ -251,7 +249,6 @@ def detay_sayfasi_dogrula(url):
             except Exception:
                 pass
 
-        # Eğer JSON-LD'den satıcı bulunamadıysa HTML içindeki mağaza/satıcı elementlerine bak
         if not seller_name:
             seller_el = soup.select_one(".proSellerName, .sellerName, [class*='seller'], [class*='store']")
             if seller_el:
@@ -265,6 +262,12 @@ def detay_sayfasi_dogrula(url):
         if not urun_adi_gecerli(title):
             slug = url_slug_adi(url)
             title = slug if urun_adi_gecerli(slug) else "N11 Ürünü"
+
+        # Başlıktaki SEO eklerini temizle ("Fiyatları ve Özellikleri", "- n11" vb.)
+        if title:
+            title = re.sub(r"\s*-\s*N11.*$", "", title, flags=re.I)
+            title = re.sub(r"\s*Fiyatları\s+ve\s+Özellikleri.*$", "", title, flags=re.I)
+            title = title.strip()
 
         if MIN_FIYAT <= price <= MAX_FIYAT:
             return title, round(price, 2), seller_name
@@ -319,8 +322,6 @@ def main():
                         logging.warning("Ad/fiyat doğrulanamadı, kayıt atlandı: %s", product_url)
                         continue
 
-                    # Mağaza Adı Eşleşme Kontrolü (Örn: 'Teknosa' araması yapıldıysa satıcıda 'Teknosa' geçmeli)
-                    # Not: "n11" genel arama grubu olduğu için tüm satıcıları kabul edebilir.
                     if magaza.lower() != "n11" and seller:
                         if magaza.lower() not in seller.lower():
                             logging.info("Satıcı uyuşmadı (Aranan: %s, Satan: %s), atlandı: %s", magaza, seller, product_url)
