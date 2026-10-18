@@ -184,11 +184,12 @@ def detay_sayfasi_dogrula(url):
     mobile_url = url.replace("www.n11.com", "m.n11.com")
     price = 0.0
     title = None
+    seller_name = None
 
     try:
         response = requests.get(mobile_url, headers=MOBILE_HEADERS, timeout=30)
         if response.status_code != 200:
-            return None, None
+            return None, None, None
 
         soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -214,22 +215,46 @@ def detay_sayfasi_dogrula(url):
                         if urun_adi_gecerli(t_candidate):
                             title = t_candidate.strip()
 
+                    # Satıcı bilgisini JSON-LD içerisinden yakalama
+                    if not seller_name:
+                        seller = obj.get('seller') or obj.get('brand')
+                        if isinstance(seller, dict):
+                            s_name = seller.get('name')
+                            if s_name:
+                                seller_name = str(s_name).strip()
+                        elif isinstance(seller, str):
+                            seller_name = seller.strip()
+
                     offers = obj.get('offers')
                     if offers:
-                        if isinstance(offers, list) and len(offers) > 0 and offers[0].get('price'):
-                            val = float(offers[0].get('price'))
-                            if val > 0:
-                                price = val
-                                break
-                        elif isinstance(offers, dict) and offers.get('price'):
-                            val = float(offers.get('price'))
-                            if val > 0:
-                                price = val
-                                break
+                        if isinstance(offers, list) and len(offers) > 0:
+                            first_offer = offers[0]
+                            if first_offer.get('price'):
+                                val = float(first_offer.get('price'))
+                                if val > 0:
+                                    price = val
+                            # offer içerisindeki seller kontrolü
+                            off_seller = first_offer.get('seller')
+                            if isinstance(off_seller, dict) and off_seller.get('name'):
+                                seller_name = str(off_seller.get('name')).strip()
+                        elif isinstance(offers, dict):
+                            if offers.get('price'):
+                                val = float(offers.get('price'))
+                                if val > 0:
+                                    price = val
+                            off_seller = offers.get('seller')
+                            if isinstance(off_seller, dict) and off_seller.get('name'):
+                                seller_name = str(off_seller.get('name')).strip()
                 if price > 0:
                     break
             except Exception:
                 pass
+
+        # Eğer JSON-LD'den satıcı bulunamadıysa HTML içindeki mağaza/satıcı elementlerine bak
+        if not seller_name:
+            seller_el = soup.select_one(".proSellerName, .sellerName, [class*='seller'], [class*='store']")
+            if seller_el:
+                seller_name = metin_al(seller_el)
 
         if not title:
             h1 = soup.select_one("h1")
@@ -241,12 +266,12 @@ def detay_sayfasi_dogrula(url):
             title = slug if urun_adi_gecerli(slug) else "N11 Ürünü"
 
         if MIN_FIYAT <= price <= MAX_FIYAT:
-            return title, round(price, 2)
+            return title, round(price, 2), seller_name
 
     except Exception as e:
         logging.warning("Detay sayfası açılamadı: %s (%s)", url, e)
 
-    return None, None
+    return None, None, None
 
 
 def onceki_kaydi_bul(data, u_id):
@@ -287,11 +312,18 @@ def main():
 
                     old_record = onceki_kaydi_bul(eski, u_id)
 
-                    name, price = detay_sayfasi_dogrula(product_url)
+                    name, price, seller = detay_sayfasi_dogrula(product_url)
 
                     if not name or price is None:
                         logging.warning("Ad/fiyat doğrulanamadı, kayıt atlandı: %s", product_url)
                         continue
+
+                    # Mağaza Adı Eşleşme Kontrolü (Örn: 'Teknosa' araması yapıldıysa satıcıda 'Teknosa' geçmeli)
+                    # Not: "n11" genel arama grubu olduğu için tüm satıcıları kabul edebilir.
+                    if magaza.lower() != "n11" and seller:
+                        if magaza.lower() not in seller.lower():
+                            logging.info("Satıcı uyuşmadı (Aranan: %s, Satan: %s), atlandı: %s", magaza, seller, product_url)
+                            continue
 
                     try:
                         old_price = float(old_record.get("fiyat"))
@@ -303,7 +335,6 @@ def main():
                     except (TypeError, ValueError):
                         son_bildirim_fiyati = None
 
-                    # Şüpheli büyük düşüşleri engelle
                     if (
                         old_price
                         and price < old_price
@@ -316,9 +347,6 @@ def main():
                         continue
 
                     bildirim_atilsin = False
-                    
-                    # 1. Koddaki mantık: Sadece fiyat eskisine göre DÜŞTÜYSE ve 
-                    # daha önce bu fiyattan (veya daha düşük bir fiyattan) bildirim atılmadıysa tetikle.
                     if old_price is not None:
                         if price < old_price:
                             if son_bildirim_fiyati is None or price < son_bildirim_fiyati:
@@ -332,7 +360,7 @@ def main():
                             message = (
                                 f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
                                 f"🏷️ <b>Ürün:</b> {escape(name)}\n"
-                                f"🏪 <b>Arama:</b> {escape(magaza)}\n"
+                                f"🏪 <b>Mağaza:</b> {escape(seller or magaza)}\n"
                                 f"📉 <b>Eski:</b> {old_price:.2f} TL\n"
                                 f"💰 <b>Yeni:</b> {price:.2f} TL\n"
                                 f"✅ <b>İndirim:</b> %{drop * 100:.1f}\n"
@@ -344,13 +372,13 @@ def main():
                             else:
                                 bildirim_atilsin = False
 
-                    # Eğer bildirim atıldıysa son bildirim fiyatını güncelle, atılmadıysa eskisini koru
                     current_son_bildirim = son_bildirim_fiyati if bildirim_atilsin else old_record.get("son_bildirim_fiyati")
 
                     guncel[u_id] = {
                         "fiyat": price,
                         "urun_adi": name,
                         "arama_grubu": magaza,
+                        "gercek_satici": seller or magaza,
                         "url": product_url,
                         "son_bildirim_fiyati": current_son_bildirim,
                         "son_guncelleme": time.strftime("%Y-%m-%d %H:%M:%S")
