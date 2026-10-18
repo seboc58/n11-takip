@@ -15,7 +15,6 @@ DATA_FILE = "fiyatlar.json"
 MIN_FIYAT = 500.0
 MAX_FIYAT = 300000.0
 SAYFA_SAYISI = 6
-DETAY_SAYFASI_DOGRULA = True
 
 logging.basicConfig(
     level=logging.INFO,
@@ -43,6 +42,11 @@ SESSION.headers.update({
     "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
     "Referer": "https://www.n11.com/"
 })
+
+MOBILE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
+}
 
 
 def telegram_mesaj_gonder(mesaj):
@@ -103,46 +107,6 @@ def metin_al(element):
     return " ".join(element.get_text(" ", strip=True).split())
 
 
-def fiyat_metnini_temizle(value):
-    if value is None:
-        return None
-
-    s = str(value).replace("\xa0", " ").strip()
-    if re.search(
-        r"taksit|aylık|ayda|başlayan|indirim oranı",
-        s, re.I
-    ):
-        return None
-
-    m = re.search(
-        r"(?<!\d)(\d{1,3}(?:[.\s]\d{3})+|\d+)"
-        r"(?:,(\d{1,2}))?\s*(?:TL|TRY|₺)",
-        s, re.I
-    )
-
-    if not m:
-        m = re.fullmatch(
-            r"\s*(\d{1,3}(?:[.\s]\d{3})+|\d+)"
-            r"(?:,(\d{1,2}))?\s*",
-            s
-        )
-        if not m:
-            return None
-
-    whole = m.group(1).replace(".", "").replace(" ", "")
-    decimal = m.group(2)
-    raw = whole + ("." + decimal if decimal else "")
-
-    try:
-        price = float(raw)
-    except ValueError:
-        return None
-
-    if MIN_FIYAT <= price <= MAX_FIYAT:
-        return round(price, 2)
-    return None
-
-
 def urun_url_temizle(url):
     p = urlsplit(urljoin("https://www.n11.com/", url))
     return urlunsplit((
@@ -151,13 +115,8 @@ def urun_url_temizle(url):
 
 
 def urun_id_al(url):
-    """
-    n11 ürün URL'lerinden değişmeyen benzersiz kısmı (veya ID'yi) ayıklar.
-    Örn: https://www.n11.com/urun/ornek-urun-123456 -> ornek-urun-123456
-    """
     temiz_url = urun_url_temizle(url)
     path = urlsplit(temiz_url).path.rstrip("/")
-    # Eğer path içinde /urun/ geçiyorsa son parçayı alalım
     parts = path.split("/")
     if "urun" in parts:
         try:
@@ -205,48 +164,6 @@ def url_slug_adi(url):
     return re.sub(r"-+", " ", slug).strip()
 
 
-def urun_adi_bul(kart, link, url):
-    for attr in ("data-product-name", "title", "aria-label"):
-        name = link.get(attr, "")
-        if urun_adi_gecerli(name):
-            return re.sub(r"\s+", " ", name).strip()[:180]
-
-    selectors = [
-        "[itemprop='name']",
-        "[data-testid*='product-name']",
-        "[data-testid*='product-title']",
-        "[class*='productName']",
-        "[class*='product-name']",
-        "[class*='productTitle']",
-        "[class*='product-title']",
-        "[class*='proName']",
-        "[class*='prdName']"
-    ]
-
-    for selector in selectors:
-        for el in kart.select(selector):
-            name = (
-                el.get("content")
-                or el.get("title")
-                or metin_al(el)
-            )
-            if urun_adi_gecerli(name):
-                return re.sub(r"\s+", " ", name).strip()[:180]
-
-    for img in kart.find_all("img"):
-        name = img.get("alt", "")
-        if urun_adi_gecerli(name):
-            return re.sub(r"\s+", " ", name).strip()[:180]
-
-    for el in kart.select("h1, h2, h3"):
-        name = metin_al(el)
-        if urun_adi_gecerli(name):
-            return name[:180]
-
-    slug = url_slug_adi(url)
-    return slug if urun_adi_gecerli(slug) else None
-
-
 def kartlari_bul(soup):
     links = soup.select('a[href*="/urun/"]')
     results = []
@@ -258,180 +175,78 @@ def kartlari_bul(soup):
         if u_id in seen:
             continue
         seen.add(u_id)
-
-        candidate = link
-        for parent in link.parents:
-            if getattr(parent, "name", None) in ("body", "html"):
-                break
-            text = metin_al(parent)
-            if len(text) <= 1600 and parent.find(
-                "a", href=re.compile(r"/urun/")
-            ):
-                candidate = parent
-                break
-
-        results.append((candidate, link, url))
+        results.append((link, url))
 
     return results
 
 
-def sepet_fiyati_bul(container):
-    candidates = []
-
-    for el in container.find_all(
-        ["span", "div", "p", "strong", "b", "ins"]
-    ):
-        text = metin_al(el)
-
-        if len(text) > 180:
-            continue
-
-        if not re.search(
-            r"sepette|sepet fiyatı|sepete özel",
-            text, re.I
-        ):
-            continue
-
-        price = fiyat_metnini_temizle(text)
-        if price is not None:
-            candidates.append((len(text), price))
-
-    if candidates:
-        candidates.sort(key=lambda x: x[0])
-        return candidates[0][1]
-
-    return None
-
-
-def normal_fiyati_bul(container):
-    candidates = []
-
-    for el in container.find_all(
-        ["ins", "span", "div", "p", "strong", "b"]
-    ):
-        classes = " ".join(el.get("class", []))
-        itemprop = el.get("itemprop", "")
-        text = metin_al(el)
-
-        if len(text) > 100:
-            continue
-
-        if re.search(
-            r"sepette|sepet fiyatı|kupon|taksit|indirim oranı",
-            text, re.I
-        ):
-            continue
-
-        if not (
-            re.search(
-                r"price|fiyat|amount|sale|current|newprice",
-                classes, re.I
-            )
-            or itemprop == "price"
-        ):
-            continue
-
-        raw = el.get("content") or text
-        price = fiyat_metnini_temizle(raw)
-
-        if price is not None:
-            candidates.append((len(text), price))
-
-    if candidates:
-        candidates.sort(key=lambda x: x[0])
-        return candidates[0][1]
-
-    return None
-
-
-def jsonld_urun_verisi(soup):
-    names = []
-    prices = []
-
-    for script in soup.select('script[type="application/ld+json"]'):
-        try:
-            data = json.loads(script.string or script.get_text())
-        except (ValueError, TypeError):
-            continue
-
-        stack = data if isinstance(data, list) else [data]
-
-        while stack:
-            obj = stack.pop()
-
-            if isinstance(obj, list):
-                stack.extend(obj)
-                continue
-
-            if not isinstance(obj, dict):
-                continue
-
-            if isinstance(obj.get("@graph"), list):
-                stack.extend(obj["@graph"])
-
-            typ = obj.get("@type", "")
-            if isinstance(typ, list):
-                typ = " ".join(typ)
-
-            if "Product" not in str(typ):
-                continue
-
-            name = obj.get("name")
-            if urun_adi_gecerli(name):
-                names.append(name.strip())
-
-            offers = obj.get("offers", [])
-            offers = offers if isinstance(offers, list) else [offers]
-
-            for offer in offers:
-                if not isinstance(offer, dict):
-                    continue
-
-                raw = offer.get("price") or offer.get("lowPrice")
-                if raw is not None:
-                    price = fiyat_metnini_temizle(str(raw))
-                    if price is not None:
-                        prices.append(price)
-
-    return names, prices
-
-
 def detay_sayfasi_dogrula(url):
+    mobile_url = url.replace("www.n11.com", "m.n11.com")
+    price = 0.0
+    title = None
+
     try:
-        response = SESSION.get(url, timeout=25)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-    except requests.RequestException as e:
-        logging.warning("Detay sayfası açılamadı: %s (%s)", url, e)
-        return None, None
-
-    names, prices = jsonld_urun_verisi(soup)
-
-    h1 = soup.select_one("h1")
-    title = metin_al(h1) if h1 else None
-
-    if not urun_adi_gecerli(title):
-        title = names[0] if names else None
-
-    slug_words = set(re.findall(r"[a-z0-9]+", url_slug_adi(url).lower()))
-    title_words = set(re.findall(r"[a-z0-9]+", (title or "").lower()))
-    meaningful = {w for w in slug_words if len(w) > 2}
-
-    if meaningful and title_words:
-        overlap = len(meaningful & title_words) / len(meaningful)
-        if overlap < 0.35:
-            logging.warning("Ürün adı/URL uyuşmuyor: %s", url)
+        response = requests.get(mobile_url, headers=MOBILE_HEADERS, timeout=30)
+        if response.status_code != 200:
             return None, None
 
-    basket_price = sepet_fiyati_bul(soup)
-    if basket_price is not None:
-        return title, basket_price
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-    if prices:
-        return title, min(prices)
+        # JSON-LD ile nokta atışı fiyat çekme (1. kodun kanıtlanmış yöntemi)
+        for script in soup.find_all('script', type='application/ld+json'):
+            try:
+                data = json.loads(script.string or script.get_text())
+                stack = data if isinstance(data, list) else [data]
+                while stack:
+                    obj = stack.pop()
+                    if isinstance(obj, list):
+                        stack.extend(obj)
+                        continue
+                    if not isinstance(obj, dict):
+                        continue
+                    if isinstance(obj.get("@graph"), list):
+                        stack.extend(obj["@graph"])
 
-    logging.warning("Detay sayfasında yapılandırılmış fiyat yok: %s", url)
-    return title, None
+                    # Ürün adını da yakalayalım
+                    if not title and obj.get("@type") == "Product" and obj.get("name"):
+                        t_candidate = obj.get("name")
+                        if urun_adi_gecerli(t_candidate):
+                            title = t_candidate.strip()
+
+                    offers = obj.get('offers')
+                    if offers:
+                        if isinstance(offers, list) and offers[0].get('price'):
+                            val = float(offers[0].get('price'))
+                            if val > 0:
+                                price = val
+                                break
+                        elif isinstance(offers, dict) and offers.get('price'):
+                            val = float(offers.get('price'))
+                            if val > 0:
+                                price = val
+                                break
+                if price > 0:
+                    break
+            except Exception:
+                pass
+
+        # Eğer JSON-LD'den başlık bulunamadıysa HTML h1 etiketine bak
+        if not title:
+            h1 = soup.select_one("h1")
+            if h1:
+                title = metin_al(h1)
+
+        if not urun_adi_gecerli(title):
+            slug = url_slug_adi(url)
+            title = slug if urun_adi_gecerli(slug) else "N11 Ürünü"
+
+        if MIN_FIYAT <= price <= MAX_FIYAT:
+            return title, round(price, 2)
+
+    except Exception as e:
+        logging.warning("Detay sayfası açılamadı: %s (%s)", url, e)
+
+    return None, None
 
 
 def onceki_kaydi_bul(data, u_id):
@@ -455,151 +270,4 @@ def main():
 
             try:
                 response = SESSION.get(url, timeout=30)
-                response.raise_for_status()
-                soup = BeautifulSoup(response.text, "html.parser")
-                cards = kartlari_bul(soup)
-
-                if not cards:
-                    logging.warning(
-                        "%s sayfa %s: ürün bulunamadı.",
-                        magaza, sayfa
-                    )
-                    time.sleep(1)
-                    continue
-
-                for kart, link, product_url in cards:
-                    u_id = urun_id_al(product_url)
-                    if u_id in gorulen:
-                        continue
-                    gorulen.add(u_id)
-
-                    old_record = onceki_kaydi_bul(eski, u_id)
-                    name = urun_adi_bul(kart, link, product_url)
-
-                    price = sepet_fiyati_bul(kart)
-                    is_basket = price is not None
-
-                    if price is None:
-                        price = normal_fiyati_bul(kart)
-
-                    detail_name, detail_price = detay_sayfasi_dogrula(
-                        product_url
-                    )
-
-                    if detail_name and urun_adi_gecerli(detail_name):
-                        name = detail_name
-
-                    if detail_price is not None:
-                        price = detail_price
-                        is_basket = False
-
-                    if not urun_adi_gecerli(name):
-                        old_name = old_record.get("urun_adi", "")
-                        name = (
-                            old_name
-                            if urun_adi_gecerli(old_name)
-                            else None
-                        )
-
-                    if not name or price is None:
-                        logging.warning(
-                            "Ad/fiyat doğrulanamadı, kayıt atlandı: %s",
-                            product_url
-                        )
-                        continue
-
-                    try:
-                        old_price = float(old_record.get("fiyat"))
-                    except (TypeError, ValueError):
-                        old_price = None
-
-                    try:
-                        son_bildirim_fiyati = float(old_record.get("son_bildirim_fiyati"))
-                    except (TypeError, ValueError):
-                        son_bildirim_fiyati = None
-
-                    if (
-                        old_price
-                        and price < old_price
-                        and (old_price - price) / old_price > 0.60
-                    ):
-                        logging.warning(
-                            "Şüpheli fiyat düşüşü; bildirim ve kayıt atlandı: "
-                            "%s | %.2f -> %.2f",
-                            name, old_price, price
-                        )
-                        continue
-
-                    bildirim_atilsin = False
-                    if old_price is not None:
-                        if price < old_price:
-                            if son_bildirim_fiyati is None or price < son_bildirim_fiyati:
-                                bildirim_atilsin = True
-
-                    if bildirim_atilsin:
-                        difference = old_price - price
-                        drop = difference / old_price
-
-                        if difference >= 1:
-                            basket_note = (
-                                "\n🎟️ <i>Sepette indirimli fiyat</i>"
-                                if is_basket else ""
-                            )
-
-                            message = (
-                                f"🔥 <b>FİYAT DÜŞTÜ!</b>{basket_note}\n\n"
-                                f"🏷️ <b>Ürün:</b> {escape(name)}\n"
-                                f"🏪 <b>Arama:</b> {escape(magaza)}\n"
-                                f"📉 <b>Eski:</b> {old_price:.2f} TL\n"
-                                f"💰 <b>Yeni:</b> {price:.2f} TL\n"
-                                f"✅ <b>İndirim:</b> %{drop * 100:.1f}\n"
-                                f"💵 <b>Fark:</b> {difference:.2f} TL\n\n"
-                                f'<a href="{escape(product_url, quote=True)}">'
-                                f"Ürüne Git</a>"
-                            )
-                            if telegram_mesaj_gonder(message):
-                                son_bildirim_fiyati = price
-                            else:
-                                bildirim_atilsin = False
-
-                    current_son_bildirim = son_bildirim_fiyati if not bildirim_atilsin else price
-                    if not bildirim_atilsin:
-                        current_son_bildirim = old_record.get("son_bildirim_fiyati")
-
-                    guncel[u_id] = {
-                        "fiyat": price,
-                        "urun_adi": name,
-                        "arama_grubu": magaza,
-                        "url": product_url,
-                        "son_bildirim_fiyati": current_son_bildirim,
-                        "son_guncelleme": time.strftime(
-                            "%Y-%m-%d %H:%M:%S"
-                        )
-                    }
-
-                    toplam += 1
-
-                logging.info(
-                    "%s sayfa %s işlendi; toplam %s ürün.",
-                    magaza, sayfa, toplam
-                )
-                time.sleep(1)
-
-            except requests.RequestException as e:
-                logging.error(
-                    "%s sayfa %s hatası: %s", magaza, sayfa, e
-                )
-                time.sleep(1)
-
-        logging.info("%s tamamlandı: %s ürün.", magaza, toplam)
-
-    if yeni_fiyatlari_kaydet(guncel):
-        logging.info(
-            "Tarama tamamlandı. Kayıt sayısı: %s", len(guncel)
-        )
-    else:
-        logging.error("Fiyatlar dosyaya kaydedilemedi.")
-
-
-if __name__ == "__main__":
-    main()
+                response.raise_for_status
