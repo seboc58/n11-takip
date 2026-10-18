@@ -12,7 +12,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 DATA_FILE = "fiyatlar.json"
 
-MIN_FIYAT = 500.0
+MIN_FIYAT = 300.0
 MAX_FIYAT = 300000.0
 SAYFA_SAYISI = 6
 
