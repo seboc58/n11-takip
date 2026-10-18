@@ -192,7 +192,6 @@ def detay_sayfasi_dogrula(url):
 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # JSON-LD ile nokta atışı fiyat çekme (1. kodun kanıtlanmış yöntemi)
         for script in soup.find_all('script', type='application/ld+json'):
             try:
                 data = json.loads(script.string or script.get_text())
@@ -201,73 +200,3 @@ def detay_sayfasi_dogrula(url):
                     obj = stack.pop()
                     if isinstance(obj, list):
                         stack.extend(obj)
-                        continue
-                    if not isinstance(obj, dict):
-                        continue
-                    if isinstance(obj.get("@graph"), list):
-                        stack.extend(obj["@graph"])
-
-                    # Ürün adını da yakalayalım
-                    if not title and obj.get("@type") == "Product" and obj.get("name"):
-                        t_candidate = obj.get("name")
-                        if urun_adi_gecerli(t_candidate):
-                            title = t_candidate.strip()
-
-                    offers = obj.get('offers')
-                    if offers:
-                        if isinstance(offers, list) and offers[0].get('price'):
-                            val = float(offers[0].get('price'))
-                            if val > 0:
-                                price = val
-                                break
-                        elif isinstance(offers, dict) and offers.get('price'):
-                            val = float(offers.get('price'))
-                            if val > 0:
-                                price = val
-                                break
-                if price > 0:
-                    break
-            except Exception:
-                pass
-
-        # Eğer JSON-LD'den başlık bulunamadıysa HTML h1 etiketine bak
-        if not title:
-            h1 = soup.select_one("h1")
-            if h1:
-                title = metin_al(h1)
-
-        if not urun_adi_gecerli(title):
-            slug = url_slug_adi(url)
-            title = slug if urun_adi_gecerli(slug) else "N11 Ürünü"
-
-        if MIN_FIYAT <= price <= MAX_FIYAT:
-            return title, round(price, 2)
-
-    except Exception as e:
-        logging.warning("Detay sayfası açılamadı: %s (%s)", url, e)
-
-    return None, None
-
-
-def onceki_kaydi_bul(data, u_id):
-    old = data.get(u_id)
-    return old if isinstance(old, dict) else {}
-
-
-def main():
-    logging.info("Fiyat taraması başladı.")
-
-    eski = eski_fiyatlari_yukle()
-    guncel = dict(eski)
-
-    for magaza, base_url in MAGAZALAR.items():
-        logging.info("[%s] taranıyor.", magaza)
-        gorulen = set()
-        toplam = 0
-
-        for sayfa in range(1, SAYFA_SAYISI + 1):
-            url = f"{base_url}&pg={sayfa}"
-
-            try:
-                response = SESSION.get(url, timeout=30)
-                response.raise_for_status
