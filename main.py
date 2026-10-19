@@ -24,6 +24,7 @@ logging.basicConfig(
 MAGAZALAR = {
     "Teknosa": "https://www.n11.com/arama?q=teknosa",
     "n11": "https://www.n11.com/arama?q=n11",
+    "Philips": "https://www.n11.com/arama?q=philips",
     "Mediamarkt": "https://www.n11.com/arama?q=mediamarkt",
     "Braunshop": "https://www.n11.com/arama?q=braunshop",
     "Korayspor": "https://www.n11.com/arama?q=korayspor",
