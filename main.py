@@ -27,7 +27,7 @@ MAGAZALAR = {
     "Philips": "https://www.n11.com/arama?q=philips",
     "Mediamarkt": "https://www.n11.com/arama?q=mediamarkt",
     "Braunshop": "https://www.n11.com/arama?q=braunshop",
-    "JackJones": "https://www.n11.com/arama?q=jack-jones",
+    "Jack&Jones": "https://www.n11.com/arama?q=jack-jones",
     "Skechers": "https://www.n11.com/arama?q=skechers",
     "Karaca": "https://www.n11.com/arama?q=karaca",
     "Tefal": "https://www.n11.com/arama?q=tefal",
@@ -162,3 +162,211 @@ def urun_adi_gecerli(name):
 def url_slug_adi(url):
     path = unquote(urlsplit(url).path)
     slug = path.rstrip("/").split("/")[-1]
+    slug = re.sub(r"-\d+$", "", slug)
+    return re.sub(r"-+", " ", slug).strip()
+
+
+def kartlari_bul(soup):
+    links = soup.select('a[href*="/urun/"]')
+    results = []
+    seen = set()
+
+    for link in links:
+        url = urun_url_temizle(link.get("href", ""))
+        u_id = urun_id_al(url)
+        if u_id in seen:
+            continue
+        seen.add(u_id)
+        results.append((link, url))
+
+    return results
+
+
+def detay_sayfasi_dogrula(url):
+    mobile_url = url.replace("www.n11.com", "m.n11.com")
+    price = 0.0
+    title = None
+    seller_name = None
+
+    try:
+        response = requests.get(mobile_url, headers=MOBILE_HEADERS, timeout=30)
+        if response.status_code != 200:
+            return None, None, None
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        for script in soup.find_all('script', type='application/ld+json'):
+            try:
+                script_text = script.string or script.get_text()
+                if not script_text:
+                    continue
+                data = json.loads(script_text)
+                stack = data if isinstance(data, list) else [data]
+                while stack:
+                    obj = stack.pop()
+                    if isinstance(obj, list):
+                        stack.extend(obj)
+                        continue
+                    if not isinstance(obj, dict):
+                        continue
+                    if isinstance(obj.get("@graph"), list):
+                        stack.extend(obj["@graph"])
+
+                    if not title and obj.get("@type") == "Product" and obj.get("name"):
+                        t_candidate = obj.get("name")
+                        if urun_adi_gecerli(t_candidate):
+                            title = t_candidate.strip()
+
+                    if not seller_name:
+                        seller = obj.get('seller') or obj.get('brand')
+                        if isinstance(seller, dict):
+                            s_name = seller.get('name')
+                            if s_name:
+                                seller_name = str(s_name).strip()
+                        elif isinstance(seller, str):
+                            seller_name = seller.strip()
+
+                    offers = obj.get('offers')
+                    if offers:
+                        if isinstance(offers, list) and len(offers) > 0:
+                            first_offer = offers[0]
+                            if first_offer.get('price'):
+                                val = float(first_offer.get('price'))
+                                if val > 0:
+                                    price = val
+                            off_seller = first_offer.get('seller')
+                            if isinstance(off_seller, dict) and off_seller.get('name'):
+                                seller_name = str(off_seller.get('name')).strip()
+                        elif isinstance(offers, dict):
+                            if offers.get('price'):
+                                val = float(offers.get('price'))
+                                if val > 0:
+                                    price = val
+                            off_seller = offers.get('seller')
+                            if isinstance(off_seller, dict) and off_seller.get('name'):
+                                seller_name = str(off_seller.get('name')).strip()
+                if price > 0:
+                    break
+            except Exception:
+                pass
+
+        if not seller_name:
+            seller_el = soup.select_one(".proSellerName, .sellerName, [class*='seller'], [class*='store']")
+            if seller_el:
+                seller_name = metin_al(seller_el)
+
+        if not title:
+            h1 = soup.select_one("h1")
+            if h1:
+                title = metin_al(h1)
+
+        if not urun_adi_gecerli(title):
+            slug = url_slug_adi(url)
+            title = slug if urun_adi_gecerli(slug) else "N11 Ürünü"
+
+        # Başlıktaki SEO eklerini temizle
+        if title:
+            title = re.sub(r"\s*-\s*N11.*$", "", title, flags=re.I)
+            title = re.sub(r"\s*Fiyatları\s+ve\s+Özellikleri.*$", "", title, flags=re.I)
+            title = title.strip()
+
+        if MIN_FIYAT <= price <= MAX_FIYAT:
+            return title, round(price, 2), seller_name
+
+    except Exception as e:
+        logging.warning("Detay sayfası açılamadı: %s (%s)", url, e)
+
+    return None, None, None
+
+
+def onceki_kaydi_bul(data, u_id):
+    old = data.get(u_id)
+    return old if isinstance(old, dict) else {}
+
+
+def main():
+    logging.info("Fiyat taraması başladı.")
+
+    eski = eski_fiyatlari_yukle()
+    guncel = dict(eski)
+
+    for magaza, base_url in MAGAZALAR.items():
+        logging.info("[%s] taranıyor.", magaza)
+        gorulen = set()
+        toplam = 0
+
+        for sayfa in range(1, SAYFA_SAYISI + 1):
+            url = f"{base_url}&pg={sayfa}"
+
+            try:
+                response = SESSION.get(url, timeout=30)
+                response.raise_for_status()
+                soup = BeautifulSoup(response.text, "html.parser")
+                cards = kartlari_bul(soup)
+
+                if not cards:
+                    logging.warning("%s sayfa %s: ürün bulunamadı.", magaza, sayfa)
+                    time.sleep(1)
+                    continue
+
+                for link, product_url in cards:
+                    u_id = urun_id_al(product_url)
+                    if u_id in gorulen:
+                        continue
+                    gorulen.add(u_id)
+
+                    old_record = onceki_kaydi_bul(eski, u_id)
+
+                    name, price, seller = detay_sayfasi_dogrula(product_url)
+
+                    if not name or price is None:
+                        logging.warning("Ad/fiyat doğrulanamadı, kayıt atlandı: %s", product_url)
+                        continue
+
+                    if magaza.lower() != "n11" and seller:
+                        if magaza.lower() not in seller.lower():
+                            logging.info("Satıcı uyuşmadı (Aranan: %s, Satan: %s), atlandı: %s", magaza, seller, product_url)
+                            continue
+
+                    try:
+                        old_price = float(old_record.get("fiyat"))
+                    except (TypeError, ValueError):
+                        old_price = None
+
+                    try:
+                        son_bildirim_fiyati = float(old_record.get("son_bildirim_fiyati"))
+                    except (TypeError, ValueError):
+                        son_bildirim_fiyati = None
+
+                    if (
+                        old_price
+                        and price < old_price
+                        and (old_price - price) / old_price > 0.60
+                    ):
+                        logging.warning(
+                            "Şüpheli fiyat düşüşü; bildirim ve kayıt atlandı: %s | %.2f -> %.2f",
+                            name, old_price, price
+                        )
+                        continue
+
+                    bildirim_atilsin = False
+                    if old_price is not None:
+                        if price < old_price:
+                            if son_bildirim_fiyati is None or price < son_bildirim_fiyati:
+                                bildirim_atilsin = True
+
+                    if bildirim_atilsin:
+                        difference = old_price - price
+                        drop = difference / old_price
+
+                        if difference >= 1:
+                            akakce_url = f"https://www.akakce.com/arama/?q={quote_plus(name)}"
+                            message = (
+                                f"🔥 <b>FİYAT DÜŞTÜ!</b>\n\n"
+                                f"🏷️ <b>Ürün:</b> {escape(name)} "
+                                f'(<a href="{escape(akakce_url, quote=True)}">🔍 Akakçe</a>)\n'
+                                f"🏪 <b>Mağaza:</b> {escape(seller or magaza)}\n"
+                                f"📉 <b>Eski:</b> {old_price:.2f} TL\n"
+                                f"💰 <b>Yeni:</b> {price:.2f} TL\n"
+                                f"✅ <b>İndirim:</b> %{drop * 100:.1f}\n"
+                                f"💵
