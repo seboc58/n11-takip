@@ -264,7 +264,6 @@ def detay_sayfasi_dogrula(url):
             slug = url_slug_adi(url)
             title = slug if urun_adi_gecerli(slug) else "N11 Ürünü"
 
-        # Başlıktaki SEO eklerini temizle
         if title:
             title = re.sub(r"\s*-\s*N11.*$", "", title, flags=re.I)
             title = re.sub(r"\s*Fiyatları\s+ve\s+Özellikleri.*$", "", title, flags=re.I)
@@ -352,8 +351,10 @@ def main():
                     bildirim_atilsin = False
                     if old_price is not None:
                         if price < old_price:
-                            if son_bildirim_fiyati is None or price < son_bildirim_fiyati:
-                                bildirim_atilsin = True
+                            drop_oran = (old_price - price) / old_price
+                            if drop_oran >= 0.01:
+                                if son_bildirim_fiyati is None or price < son_bildirim_fiyati:
+                                    bildirim_atilsin = True
 
                     if bildirim_atilsin:
                         difference = old_price - price
@@ -369,4 +370,42 @@ def main():
                                 f"📉 <b>Eski:</b> {old_price:.2f} TL\n"
                                 f"💰 <b>Yeni:</b> {price:.2f} TL\n"
                                 f"✅ <b>İndirim:</b> %{drop * 100:.1f}\n"
-                                f"💵
+                                f"💵 <b>Fark:</b> {difference:.2f} TL\n\n"
+                                f'<a href="{escape(product_url, quote=True)}">Ürüne Git</a>'
+                            )
+                            if telegram_mesaj_gonder(message):
+                                son_bildirim_fiyati = price
+                            else:
+                                bildirim_atilsin = False
+
+                    current_son_bildirim = son_bildirim_fiyati if bildirim_atilsin else old_record.get("son_bildirim_fiyati")
+
+                    guncel[u_id] = {
+                        "fiyat": price,
+                        "urun_adi": name,
+                        "arama_grubu": magaza,
+                        "gercek_satici": seller or magaza,
+                        "url": product_url,
+                        "son_bildirim_fiyati": current_son_bildirim,
+                        "son_guncelleme": time.strftime("%Y-%m-%d %H:%M:%S")
+                    }
+
+                    toplam += 1
+
+                logging.info("%s sayfa %s işlendi; toplam %s ürün.", magaza, sayfa, toplam)
+                time.sleep(1)
+
+            except requests.RequestException as e:
+                logging.error("%s sayfa %s hatası: %s", magaza, sayfa, e)
+                time.sleep(1)
+
+        logging.info("%s tamamlandı: %s ürün.", magaza, toplam)
+
+    if yeni_fiyatlari_kaydet(guncel):
+        logging.info("Tarama tamamlandı. Kayıt sayısı: %s", len(guncel))
+    else:
+        logging.error("Fiyatlar dosyaya kaydedilemedi.")
+
+
+if __name__ == "__main__":
+    main()
