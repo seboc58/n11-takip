@@ -323,7 +323,10 @@ def main():
                         continue
 
                     if magaza.lower() != "n11" and seller:
-                        if magaza.lower() not in seller.lower():
+                        # Boşlukları ve özel karakterleri temizleyerek karşılaştırıyoruz
+                        magaza_temiz = re.sub(r'[\s&-_]', '', magaza.lower())
+                        satan_temiz = re.sub(r'[\s&-_]', '', seller.lower())
+                        if magaza_temiz not in satan_temiz:
                             logging.info("Satıcı uyuşmadı (Aranan: %s, Satan: %s), atlandı: %s", magaza, seller, product_url)
                             continue
 
