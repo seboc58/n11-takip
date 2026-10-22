@@ -147,4 +147,18 @@ def urun_adi_gecerli(name):
         "FIRSAT ÜRÜNLERİ", "ÇOK SATANLAR", "GİRİŞ YAP"
     ]
 
-    if any(x in upper
+    if any(x in upper for x in invalid):
+        return False
+
+    if re.fullmatch(r"[\d.,\s₺€$]+", name):
+        return False
+
+    if re.search(r"\b(TL|TRY|USD|EUR)\b|₺|€|\$", name, re.I):
+        return False
+
+    return True
+
+
+def url_slug_adi(url):
+    path = unquote(urlsplit(url).path)
+    slug
