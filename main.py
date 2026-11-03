@@ -27,11 +27,10 @@ MAGAZALAR = {
     "Philips": "https://www.n11.com/arama?q=philips",
     "Mediamarkt": "https://www.n11.com/arama?q=mediamarkt",
     "Braunshop": "https://www.n11.com/arama?q=braunshop",
-    "Jack&Jones": "https://www.n11.com/arama?q=jack-jones",
+    "Boyner": "https://www.n11.com/arama?q=boyner",
     "Skechers": "https://www.n11.com/arama?q=skechers",
     "Karaca": "https://www.n11.com/arama?q=karaca",
-    "Tefal": "https://www.n11.com/arama?q=tefal",
-    "Brita": "https://www.n11.com/arama?q=brita",
+    "Tefal": "https://www.n11.com/arama?q=tefal"
 }
 
 SESSION = requests.Session()
