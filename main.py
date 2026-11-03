@@ -28,7 +28,6 @@ MAGAZALAR = {
     "Mediamarkt": "https://www.n11.com/arama?q=mediamarkt",
     "Braunshop": "https://www.n11.com/arama?q=braunshop",
     "Boyner": "https://www.n11.com/arama?q=boyner",
-    "Skechers": "https://www.n11.com/arama?q=skechers",
     "Karaca": "https://www.n11.com/arama?q=karaca",
     "Tefal": "https://www.n11.com/arama?q=tefal"
 }
